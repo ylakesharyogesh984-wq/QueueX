@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#6366F1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="QueueX">
+<title>Get Token — QueueX</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<div class="navbar">
+  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+  <div class="nav-actions">
+    <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
+    <button class="burger-btn" id="burger-btn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="nav-links">
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+    </button>
+  </div>
+  <div class="nav-links" id="nav-links">
+    {% if student_user %}
+      <span class="nav-greeting">Hi, {{ student_user['full_name'].split(' ')[0] }}</span>
+      <a href="{{ url_for('my_tokens') }}" class="btn btn-outline btn-sm">My Tokens</a>
+      <a href="{{ url_for('student_logout') }}" class="btn btn-outline btn-sm">Logout</a>
+    {% else %}
+      <a href="{{ url_for('student_login') }}" class="btn btn-outline btn-sm">Login</a>
+      <a href="{{ url_for('register') }}" class="btn btn-primary btn-sm">Register</a>
+    {% endif %}
+  </div>
+</div>
+<div class="nav-backdrop" id="nav-backdrop"></div>
+
+<div class="container-narrow">
+  <div class="card">
+    <div class="step-indicator">
+      <div class="step-dot active" id="dot-1"></div>
+      <div class="step-dot" id="dot-2"></div>
+    </div>
+
+    <form action="{{ url_for('get_token') }}" method="POST" id="token-form">
+
+      <div class="form-step active" id="step-1">
+        <h2>Your Details</h2>
+        <p class="footer-note" style="margin:6px 0 0;text-align:left;">Step 1 of 2</p>
+
+        {% if student_user %}
+          <p class="sub" style="margin-top:10px;">Logged in as <strong>{{ student_user['full_name'] }}</strong> ({{ student_user['roll_no'] }})</p>
+          <input type="hidden" name="student_name" value="{{ student_user['full_name'] }}">
+          <input type="hidden" name="roll_no" value="{{ student_user['roll_no'] }}">
+          <input type="hidden" name="phone" value="{{ student_user['phone'] }}">
+
+          <label>Father's Name</label>
+          <input type="text" name="father_name" placeholder="e.g. Ramesh Kumar" required>
+        {% else %}
+          <label>Full Name</label>
+          <input type="text" name="student_name" placeholder="e.g. Yogesh Kumar" required>
+
+          <label>Roll Number</label>
+          <input type="text" name="roll_no" placeholder="e.g. 21CS045" required>
+
+          <label>Father's Name</label>
+          <input type="text" name="father_name" placeholder="e.g. Ramesh Kumar" required>
+
+          <label>Phone Number</label>
+          <input type="tel" name="phone" placeholder="e.g. 9876543210" pattern="[0-9]{10}" required>
+
+          <p class="footer-note" style="margin-top:14px;">
+            Have an account? <a href="{{ url_for('student_login') }}">Login</a> to skip typing this every time.
+          </p>
+        {% endif %}
+
+        <button type="button" class="btn btn-primary btn-block" style="margin-top:24px;" id="next-btn">Continue →</button>
+      </div>
+
+      <div class="form-step" id="step-2">
+        <h2>Select a Counter</h2>
+        <p class="footer-note" style="margin:6px 0 0;text-align:left;">Step 2 of 2</p>
+
+        <input type="hidden" name="counter" id="selected-counter">
+
+        <div class="counter-grid">
+          {% for c in counters %}
+          <div class="counter-card" onclick="selectCounter(this, '{{ c.slug }}')">
+            <h4>{{ c.name }}</h4>
+          </div>
+          {% endfor %}
+        </div>
+
+        <div style="display:flex; gap:12px; margin-top:24px;">
+          <button type="button" class="btn btn-outline" id="back-btn" style="flex:1;">← Back</button>
+          <button type="submit" class="btn btn-primary" id="get-token-btn" style="flex:2;" disabled>Get Token</button>
+        </div>
+      </div>
+
+    </form>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
+<script src="{{ url_for('static', filename='js/student.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+</body>
+</html>

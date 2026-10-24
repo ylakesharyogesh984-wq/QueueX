@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#6366F1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="QueueX">
+<title>QueueX — Real-time Campus Queue System</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<div class="navbar">
+  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+  <div class="nav-actions">
+    <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
+    <button class="burger-btn" id="burger-btn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="nav-links">
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+    </button>
+  </div>
+  <div class="nav-links" id="nav-links">
+    <button class="btn btn-outline btn-sm" id="install-app-btn" hidden>Install</button>
+    <a href="{{ url_for('operator_login') }}" class="btn btn-outline btn-sm">Operator</a>
+    <a href="{{ url_for('admin_login') }}" class="btn btn-outline btn-sm">Admin</a>
+    <a href="{{ url_for('student') }}" class="btn btn-primary btn-sm">Get Token</a>
+  </div>
+</div>
+<div class="nav-backdrop" id="nav-backdrop"></div>
+
+<div class="hero">
+  <div class="eyebrow">● LIVE ACROSS 5 CAMPUS COUNTERS</div>
+  <h1>Skip the wait.<br><span>Not the line.</span></h1>
+  <p>QueueX replaces physical queues at your college counters with a live digital token — track your position from anywhere, in real time.</p>
+  <div class="hero-ctas">
+    <a href="{{ url_for('student') }}" class="btn btn-primary">Get Your Token →</a>
+    <a href="{{ url_for('operator_login') }}" class="btn btn-outline">Operator Login</a>
+  </div>
+
+  <div class="app-dock" aria-label="Quick actions">
+    <a href="{{ url_for('student') }}" class="dock-item">
+      <span class="dock-icon">#</span>
+      <span>Token</span>
+    </a>
+    <a href="{{ url_for('operator_login') }}" class="dock-item">
+      <span class="dock-icon">▶</span>
+      <span>Call</span>
+    </a>
+    <a href="{{ url_for('admin_login') }}" class="dock-item">
+      <span class="dock-icon">▥</span>
+      <span>Admin</span>
+    </a>
+  </div>
+
+  <div class="queue-rail-wrap">
+    <div class="queue-rail-label">
+      <span>Accounts Office</span>
+      <span>Live Preview</span>
+    </div>
+    <div class="queue-rail">
+      <div class="rail-chip serving">#29</div>
+      <span class="rail-arrow">→</span>
+      <div class="rail-chip">#30</div>
+      <div class="rail-chip">#31</div>
+      <div class="rail-chip">#32</div>
+      <div class="rail-chip">#33</div>
+      <div class="rail-chip">#34</div>
+      <div class="rail-chip you">#37</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-head">
+    <div class="eyebrow" style="display:inline-block;">WHY QUEUEX</div>
+    <h2>Built for how campuses actually move</h2>
+    <p>No apps to install, no hardware to buy — just a link that works on any phone.</p>
+  </div>
+  <div class="grid-3">
+    <div class="card feature-card">
+      <div class="icon">⚡</div>
+      <h3>Real-time, not polling</h3>
+      <p>Every call, skip, or reset pushes instantly to every open device using WebSockets — no manual refresh, ever.</p>
+    </div>
+    <div class="card feature-card">
+      <div class="icon">📊</div>
+      <h3>Live analytics</h3>
+      <p>Admins see busiest counters, average wait time, and peak hours the moment they happen.</p>
+    </div>
+    <div class="card feature-card">
+      <div class="icon">📱</div>
+      <h3>QR check-in</h3>
+      <p>Every token comes with a scannable QR code, so students can reopen their status instantly.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-head">
+    <div class="eyebrow" style="display:inline-block;">HOW IT WORKS</div>
+    <h2>Four steps, zero standing around</h2>
+  </div>
+  <div class="card">
+    <div class="timeline">
+      <div class="timeline-step">
+        <div class="timeline-num">01</div>
+        <div><h4>Fill your details</h4><p>Name, roll number, and the counter you need — takes under a minute.</p></div>
+      </div>
+      <div class="timeline-step">
+        <div class="timeline-num">02</div>
+        <div><h4>Receive your token</h4><p>An instant digital number, plus a QR code to reopen your status later.</p></div>
+      </div>
+      <div class="timeline-step">
+        <div class="timeline-num">03</div>
+        <div><h4>Track live</h4><p>Watch "currently serving" update in real time from anywhere on campus.</p></div>
+      </div>
+      <div class="timeline-step">
+        <div class="timeline-num">04</div>
+        <div><h4>Walk in on time</h4><p>Get an on-screen alert when your turn is close, and head over.</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="stats-bar">
+    <div class="stat"><div class="value">5</div><div class="label">Active Counters</div></div>
+    <div class="stat"><div class="value">0s</div><div class="label">Refresh Delay</div></div>
+    <div class="stat"><div class="value">24/7</div><div class="label">Token Access</div></div>
+  </div>
+</div>
+
+<div class="footer-note" style="padding-bottom:40px;">QueueX — Skip the Queue. Save Your Time.</div>
+
+<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
+<script src="{{ url_for('static', filename='js/landing.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+</body>
+</html>

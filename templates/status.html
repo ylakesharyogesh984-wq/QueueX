@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#6366F1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="QueueX">
+<title>Your Token — QueueX</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<input type="hidden" id="data-counter" value="{{ counter_slug }}">
+<input type="hidden" id="data-token" value="{{ token }}">
+
+<div class="navbar">
+  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+  <button class="icon-btn" id="theme-toggle">🌙</button>
+</div>
+
+<div class="container-narrow">
+  <div class="card">
+    <div class="status-hero">
+      <div class="counter-tag">{{ counter_name }}</div>
+      <div class="token-big">#{{ token }}</div>
+      <span class="badge badge-waiting" id="status-badge">Waiting</span>
+      {% if student_name %}
+      <p class="footer-note" style="margin-top:10px;">{{ student_name }} · Roll No: {{ roll_no }}</p>
+      {% endif %}
+    </div>
+
+    <div class="almost-alert" id="almost-turn">🔔 Almost your turn — please head to the counter</div>
+
+    <div class="status-stats">
+      <div class="stat-box">
+        <div class="label">Serving</div>
+        <div class="value" id="currently-serving">#0</div>
+      </div>
+      <div class="stat-box">
+        <div class="label">Ahead</div>
+        <div class="value amber" id="people-ahead">0</div>
+      </div>
+      <div class="stat-box">
+        <div class="label">Est. Wait</div>
+        <div class="value" id="estimated-wait">0m</div>
+      </div>
+    </div>
+
+    <div class="qr-wrap" id="qr-code"></div>
+
+    <p class="footer-note">Live updates via WebSocket — no need to refresh.</p>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script src="{{ url_for('static', filename='js/status.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+</body>
+</html>

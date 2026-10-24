@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#6366F1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="QueueX">
+<title>Admin Dashboard — QueueX</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<div class="navbar">
+  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+  <div class="nav-actions">
+    <button class="burger-btn" id="burger-btn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="nav-links">
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+    </button>
+  </div>
+  <div class="nav-links" id="nav-links">
+    <span class="badge-role">SUPER ADMIN</span>
+    <a href="{{ url_for('admin_logout') }}" class="btn btn-outline btn-sm">Logout</a>
+  </div>
+</div>
+<div class="nav-backdrop" id="nav-backdrop"></div>
+
+<div class="container">
+  <h2 style="margin-bottom:20px;">All Counters Overview</h2>
+  <div class="overview-grid" id="overview-grid"></div>
+
+  <div class="grid-4" style="margin-bottom:20px;">
+    <div class="card overview-card">
+      <h4>Tokens Today</h4>
+      <div class="big" id="stat-total">0</div>
+    </div>
+    <div class="card overview-card">
+      <h4>Avg Wait</h4>
+      <div class="big" id="stat-wait">0m</div>
+    </div>
+    <div class="card overview-card">
+      <h4>Busiest Counter</h4>
+      <div class="big" id="stat-busiest" style="font-size:18px;">N/A</div>
+    </div>
+    <div class="card overview-card">
+      <h4>Active Counters</h4>
+      <div class="big">5</div>
+    </div>
+  </div>
+
+  <div class="chart-card">
+    <h3>Tokens per Counter (Today)</h3>
+    <canvas id="counterChart" height="90"></canvas>
+  </div>
+
+  <div class="chart-card">
+    <h3>Peak Hours (Today)</h3>
+    <canvas id="peakChart" height="90"></canvas>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#6366F1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="QueueX">
+<title>Student Registration — QueueX</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<div class="navbar">
+  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+</div>
+
+<div class="container-narrow">
+  <div class="card login-card">
+    <span class="badge-role">CREATE ACCOUNT</span>
+    <h2 style="margin-top:14px;">Student Registration</h2>
+    <p class="sub">Create your QueueX account</p>
+
+    {% if error %}
+    <div class="error-msg">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST">
+      <label>Full Name</label>
+      <input type="text" name="full_name" placeholder="Your full name" required>
+
+      <label>Email</label>
+      <input type="email" name="email" placeholder="you@college.edu" required>
+
+      <label>Phone</label>
+      <input type="text" name="phone" placeholder="10-digit phone number" required>
+
+      <label>Roll Number</label>
+      <input type="text" name="roll_no" placeholder="Your roll number" required>
+
+      <label>Department</label>
+      <input type="text" name="department" placeholder="e.g. Computer Science">
+
+      <label>Semester</label>
+      <input type="text" name="semester" placeholder="e.g. 5th">
+
+      <label>Password</label>
+      <input type="password" name="password" placeholder="Minimum 6 characters" required>
+
+      <label>Confirm Password</label>
+      <input type="password" name="confirm_password" placeholder="Re-enter password" required>
+
+      <button type="submit" class="btn btn-primary btn-block" style="margin-top:24px;">Create Account</button>
+    </form>
+
+    <p class="footer-note">
+      Already have an account? <a href="{{ url_for('student_login') }}">Login here</a>
+    </p>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+</body>
+</html>

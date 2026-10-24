@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#6366F1">
+<title>My Tokens — QueueX</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<div class="navbar">
+  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+  <div class="nav-actions">
+    <a href="{{ url_for('student') }}" class="btn btn-outline btn-sm">+ New Token</a>
+  </div>
+</div>
+
+<div class="container-narrow">
+  <div class="card">
+    <h2>My Tokens</h2>
+    <p class="sub">History of all tokens you've generated</p>
+
+    {% if tokens %}
+      {% for t in tokens %}
+      <div class="counter-card" style="text-align:left; margin-top:14px; cursor:default;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h4 style="margin:0;">Token #{{ t['token_number'] }} — {{ t['counter_name'] }}</h4>
+          <span class="badge-role" style="font-size:11px;">{{ t['status']|upper }}</span>
+        </div>
+        <p class="footer-note" style="margin-top:6px;">Generated: {{ t['created_at'] }}</p>
+        {% if t['status'] == 'waiting' %}
+        <a href="{{ url_for('status', counter=t['counter_slug'], token=t['token_number']) }}" class="btn btn-primary" style="margin-top:10px; display:inline-block; padding:8px 16px;">Track Status</a>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+      <p class="footer-note" style="margin-top:20px;">You haven't generated any tokens yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+</body>
+</html>

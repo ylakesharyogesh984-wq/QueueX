@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#6366F1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="QueueX">
+<title>Operator Dashboard — QueueX</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<div class="navbar">
+  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+  <div class="nav-actions">
+    <button class="burger-btn" id="burger-btn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="nav-links">
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+    </button>
+  </div>
+  <div class="nav-links" id="nav-links">
+    <span class="badge-role">OPERATOR</span>
+    <a href="{{ url_for('operator_logout') }}" class="btn btn-outline btn-sm">Logout</a>
+  </div>
+</div>
+<div class="nav-backdrop" id="nav-backdrop"></div>
+
+<div class="container">
+  <div class="card">
+    <div class="dash-header">
+      <h2>Counter Control</h2>
+    </div>
+
+    <label>Select Counter</label>
+    <select id="counter-select">
+      {% for c in counters %}
+      <option value="{{ c.slug }}">{{ c.name }}</option>
+      {% endfor %}
+    </select>
+
+    <div class="status-stats">
+      <div class="stat-box">
+        <div class="label">Currently Serving</div>
+        <div class="value" id="current-token">#0</div>
+      </div>
+      <div class="stat-box">
+        <div class="label">Waiting</div>
+        <div class="value amber" id="waiting-count">0</div>
+      </div>
+    </div>
+
+    <div class="control-row">
+      <button class="btn btn-primary" onclick="callNext()">Call Next</button>
+      <button class="btn btn-amber" onclick="skipToken()">Skip</button>
+      <button class="btn btn-danger" onclick="resetQueue()">Reset Queue</button>
+    </div>
+
+    <h3 style="margin-top:10px;margin-bottom:10px;font-size:16px;">Queue</h3>
+    <div class="queue-list" id="queue-list"></div>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
+<script src="{{ url_for('static', filename='js/operator.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+</body>
+</html>

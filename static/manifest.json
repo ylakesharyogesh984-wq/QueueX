@@ -1,0 +1,32 @@
+{
+  "name": "QueueX Campus Queue",
+  "short_name": "QueueX",
+  "description": "Real-time digital token queue system for campus counters.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0B1120",
+  "theme_color": "#6366F1",
+  "categories": ["education", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/static/img/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Get Token",
+      "short_name": "Token",
+      "url": "/student"
+    },
+    {
+      "name": "Operator",
+      "short_name": "Operator",
+      "url": "/operator/login"
+    }
+  ]
+}

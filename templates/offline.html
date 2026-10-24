@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#6366F1">
+<title>Offline — QueueX</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="navbar">
+  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+</div>
+
+<div class="container-narrow">
+  <div class="card offline-card">
+    <div class="app-icon-mark">Q<span>X</span></div>
+    <h2>You are offline</h2>
+    <p class="footer-note">QueueX needs internet or campus Wi-Fi for live token updates.</p>
+    <a href="{{ url_for('index') }}" class="btn btn-primary btn-block">Try Again</a>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+</body>
+</html>
