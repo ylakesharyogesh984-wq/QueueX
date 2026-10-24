@@ -1,6 +1,6 @@
 # QueueX
 
-QueueX is a Flask + Socket.IO campus queue system. Students can generate a token for a counter, operators can call or skip tokens, and admins can view live analytics.
+QueueX is a flask Flask + Socket.IO campus queue system. Students can generate a token for a counter, operators can call or skip tokens, and admins can view live analytics.
 
 It is now also a Progressive Web App (PWA), so it can be installed on Android from Chrome and can be wrapped into an APK.
 
