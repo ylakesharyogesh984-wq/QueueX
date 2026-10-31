@@ -168,6 +168,44 @@ class PostgresConnectionWrapper:
             self.commit()
 
 
+def table_exists(cursor, table_name):
+    """Check if a table exists in either SQLite or PostgreSQL."""
+    if is_postgres():
+        cursor.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = %s",
+            (table_name.lower(),)
+        )
+        return cursor.fetchone() is not None
+
+    cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
+        (table_name,)
+    )
+    return cursor.fetchone() is not None
+
+
+def column_exists(cursor, table_name, column_name):
+    """Check if a column exists in a table in either SQLite or PostgreSQL."""
+    if is_postgres():
+        cursor.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = %s AND column_name = %s",
+            (table_name.lower(), column_name.lower())
+        )
+        return cursor.fetchone() is not None
+
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    cols = cursor.fetchall()
+    return any(c["name"].lower() == column_name.lower() for c in cols)
+
+
+def add_column_if_missing(cursor, table_name, column_name, col_definition):
+    """Safely add a missing column to an existing table without affecting data."""
+    if not column_exists(cursor, table_name, column_name):
+        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {col_definition}")
+        return True
+    return False
+
+
 def get_db():
     if is_postgres():
         if not PSYCOPG2_AVAILABLE:

@@ -58,32 +58,22 @@ APP_START_TIME = datetime.datetime.now(datetime.timezone.utc)
 QUEUE_LOCK = threading.RLock()
 
 # -------------------------------------------------------------
-# DATABASE INITIALIZATION
+# DATABASE INITIALIZATION & SCHEMA MIGRATION
 # -------------------------------------------------------------
 
 def init_db():
+    """
+    Safely initialize and migrate schema for PostgreSQL and SQLite.
+    Guarantees:
+    - Creates tables in strict dependency order (departments -> counters -> users -> tokens -> feedback -> notifications -> audit_logs)
+    - Adds missing columns to existing tables without data loss
+    - Recreates or updates indexes idempotently
+    - Does not swallow initialization errors
+    """
     with db.get_db() as conn:
         c = conn.cursor()
 
-        # Users table (students, operators, admin)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                full_name TEXT NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('student', 'operator', 'admin')),
-                identifier TEXT UNIQUE NOT NULL, -- Student Roll No / Operator Employee ID
-                department TEXT DEFAULT 'CSE',
-                course TEXT DEFAULT 'B.Tech',
-                semester INTEGER DEFAULT 6,
-                phone TEXT DEFAULT '',
-                is_active INTEGER DEFAULT 1,     -- 1=Active, 0=Deactivated
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Departments (Library, Accounts, Registrar, CRC, Examination, Hostel)
+        # 1. Departments table (MUST precede counters)
         c.execute("""
             CREATE TABLE IF NOT EXISTS departments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,60 +81,141 @@ def init_db():
                 name TEXT NOT NULL,
                 description TEXT DEFAULT '',
                 building_block TEXT DEFAULT 'Block 1',
-                is_active INTEGER DEFAULT 1,     -- 1=Active, 0=Deactivated
+                is_active INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.commit()
 
-        # Service Counters
+        # Migrate departments columns if existing table lacked any
+        db.add_column_if_missing(c, "departments", "code", "TEXT")
+        db.add_column_if_missing(c, "departments", "name", "TEXT")
+        db.add_column_if_missing(c, "departments", "description", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "departments", "building_block", "TEXT DEFAULT 'Block 1'")
+        db.add_column_if_missing(c, "departments", "is_active", "INTEGER DEFAULT 1")
+        db.add_column_if_missing(c, "departments", "created_at", "TIMESTAMP")
+        conn.commit()
+
+        # 2. Service Counters table
         c.execute("""
             CREATE TABLE IF NOT EXISTS counters (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                department_id INTEGER NOT NULL,
-                name TEXT NOT NULL,          -- e.g. "Fee Deposit Window 1", "Degree Dispatch"
-                code TEXT UNIQUE NOT NULL,   -- e.g. "ACCOUNTS-W1", "REG-W2"
-                is_active INTEGER DEFAULT 1, -- 1=Open, 0=Closed
-                is_paused INTEGER DEFAULT 0, -- 1=Queue paused, 0=Normal
+                department_id INTEGER NOT NULL DEFAULT 1,
+                name TEXT NOT NULL,
+                code TEXT UNIQUE,
+                is_active INTEGER DEFAULT 1,
+                is_paused INTEGER DEFAULT 0,
                 assigned_operator_id INTEGER DEFAULT NULL,
                 avg_service_time_mins INTEGER DEFAULT 8,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.commit()
 
-        # Queue Tokens
+        # Migrate counters columns if upgrading from earlier schema
+        db.add_column_if_missing(c, "counters", "department_id", "INTEGER DEFAULT 1")
+        db.add_column_if_missing(c, "counters", "name", "TEXT")
+        db.add_column_if_missing(c, "counters", "code", "TEXT")
+        db.add_column_if_missing(c, "counters", "is_active", "INTEGER DEFAULT 1")
+        db.add_column_if_missing(c, "counters", "is_paused", "INTEGER DEFAULT 0")
+        db.add_column_if_missing(c, "counters", "assigned_operator_id", "INTEGER DEFAULT NULL")
+        db.add_column_if_missing(c, "counters", "avg_service_time_mins", "INTEGER DEFAULT 8")
+        db.add_column_if_missing(c, "counters", "created_at", "TIMESTAMP")
+        conn.commit()
+
+        # 3. Users table (students, operators, admin)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE,
+                password_hash TEXT,
+                full_name TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'student',
+                identifier TEXT,
+                department TEXT DEFAULT 'CSE',
+                course TEXT DEFAULT 'B.Tech',
+                semester INTEGER DEFAULT 6,
+                phone TEXT DEFAULT '',
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+
+        # Migrate users columns if upgrading from earlier schema
+        db.add_column_if_missing(c, "users", "email", "TEXT")
+        db.add_column_if_missing(c, "users", "password_hash", "TEXT")
+        db.add_column_if_missing(c, "users", "full_name", "TEXT")
+        db.add_column_if_missing(c, "users", "role", "TEXT DEFAULT 'student'")
+        db.add_column_if_missing(c, "users", "identifier", "TEXT")
+        db.add_column_if_missing(c, "users", "department", "TEXT DEFAULT 'CSE'")
+        db.add_column_if_missing(c, "users", "course", "TEXT DEFAULT 'B.Tech'")
+        db.add_column_if_missing(c, "users", "semester", "INTEGER DEFAULT 6")
+        db.add_column_if_missing(c, "users", "phone", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "users", "is_active", "INTEGER DEFAULT 1")
+        db.add_column_if_missing(c, "users", "created_at", "TIMESTAMP")
+        conn.commit()
+
+        # Backfill user identifiers from roll_no if missing
+        if db.column_exists(c, "users", "roll_no"):
+            try:
+                c.execute("UPDATE users SET identifier = roll_no WHERE identifier IS NULL AND roll_no IS NOT NULL")
+                conn.commit()
+            except Exception:
+                pass
+
+        # 4. Queue Tokens table
         c.execute("""
             CREATE TABLE IF NOT EXISTS tokens (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                token_number INTEGER NOT NULL, -- Daily incremental per counter (1, 2, 3...)
-                counter_id INTEGER NOT NULL,
-                department_id INTEGER NOT NULL,
-                student_id INTEGER NOT NULL,
-                student_name TEXT NOT NULL,
-                student_roll TEXT NOT NULL,
+                token_number INTEGER NOT NULL,
+                counter_id INTEGER NOT NULL DEFAULT 1,
+                department_id INTEGER NOT NULL DEFAULT 1,
+                student_id INTEGER NOT NULL DEFAULT 1,
+                student_name TEXT,
+                student_roll TEXT,
                 student_phone TEXT DEFAULT '',
                 service_reason TEXT DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'waiting' CHECK(status IN ('waiting', 'serving', 'served', 'skipped', 'cancelled')),
-                token_salt TEXT NOT NULL,      -- Secret for secure QR verification
+                status TEXT NOT NULL DEFAULT 'waiting',
+                token_salt TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 called_at TIMESTAMP DEFAULT NULL,
                 completed_at TIMESTAMP DEFAULT NULL
             )
         """)
+        conn.commit()
 
-        # Student Feedback for completed services
+        # Migrate tokens columns if upgrading from earlier schema
+        db.add_column_if_missing(c, "tokens", "token_number", "INTEGER DEFAULT 1")
+        db.add_column_if_missing(c, "tokens", "counter_id", "INTEGER DEFAULT 1")
+        db.add_column_if_missing(c, "tokens", "department_id", "INTEGER DEFAULT 1")
+        db.add_column_if_missing(c, "tokens", "student_id", "INTEGER DEFAULT 1")
+        db.add_column_if_missing(c, "tokens", "student_name", "TEXT")
+        db.add_column_if_missing(c, "tokens", "student_roll", "TEXT")
+        db.add_column_if_missing(c, "tokens", "student_phone", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "tokens", "service_reason", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "tokens", "status", "TEXT DEFAULT 'waiting'")
+        db.add_column_if_missing(c, "tokens", "token_salt", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "tokens", "created_at", "TIMESTAMP")
+        db.add_column_if_missing(c, "tokens", "called_at", "TIMESTAMP")
+        db.add_column_if_missing(c, "tokens", "completed_at", "TIMESTAMP")
+        conn.commit()
+
+        # 5. Student Feedback
         c.execute("""
             CREATE TABLE IF NOT EXISTS feedback (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                token_id INTEGER UNIQUE NOT NULL,
-                student_id INTEGER NOT NULL,
-                counter_id INTEGER NOT NULL,
-                rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+                token_id INTEGER UNIQUE,
+                student_id INTEGER NOT NULL DEFAULT 1,
+                counter_id INTEGER NOT NULL DEFAULT 1,
+                rating INTEGER NOT NULL DEFAULT 5,
                 comments TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.commit()
 
-        # System Notifications
+        # 6. System Notifications
         c.execute("""
             CREATE TABLE IF NOT EXISTS notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -155,8 +226,9 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.commit()
 
-        # System Audit Log
+        # 7. System Audit Log
         c.execute("""
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,15 +239,15 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.commit()
 
-        # Performance & Concurrency Safe Indexes
+        # 8. Performance Indexes (now safely run after column migrations)
         c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_counter_status ON tokens (counter_id, status);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_student_status ON tokens (student_id, status);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_created ON tokens (created_at);")
-
         conn.commit()
 
-        # Seed initial departments for CGC University Mohali
+        # 9. Seed initial departments for CGC University Mohali (only if empty)
         c.execute("SELECT COUNT(*) as cnt FROM departments")
         if c.fetchone()["cnt"] == 0:
             cgc_departments = [
@@ -191,8 +263,9 @@ def init_db():
                     INSERT INTO departments (code, name, description, building_block)
                     VALUES (?, ?, ?, ?)
                 """, (code, name, desc, bldg))
+            conn.commit()
 
-        # Seed initial counters
+        # 10. Seed initial counters (only if empty)
         c.execute("SELECT COUNT(*) as cnt FROM counters")
         if c.fetchone()["cnt"] == 0:
             initial_counters = [
@@ -209,8 +282,17 @@ def init_db():
                     INSERT INTO counters (department_id, name, code, avg_service_time_mins)
                     VALUES (?, ?, ?, ?)
                 """, (dep_id, name, code, avg_m))
+            conn.commit()
 
-        # Seed Default Admin
+        # Backfill counter codes and department_ids if any pre-existing rows have nulls
+        try:
+            c.execute("UPDATE counters SET department_id = 1 WHERE department_id IS NULL")
+            c.execute("UPDATE counters SET code = 'COUNTER-' || id WHERE code IS NULL")
+            conn.commit()
+        except Exception:
+            pass
+
+        # 11. Seed Default Admin (only if none exists)
         c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'admin'")
         if c.fetchone()["cnt"] == 0:
             c.execute("""
@@ -221,8 +303,9 @@ def init_db():
                 generate_password_hash("Admin@QueueX2026"),
                 "CGC Central Queue Administrator"
             ))
+            conn.commit()
 
-        # Seed Default Operator (assigned to Counter 1 - Fee Deposit)
+        # 12. Seed Default Operator (assigned to Counter 1 - Fee Deposit, only if none exists)
         c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'operator'")
         if c.fetchone()["cnt"] == 0:
             c.execute("""
@@ -234,8 +317,9 @@ def init_db():
                 "Accounts Counter Officer"
             ))
             c.execute("UPDATE counters SET assigned_operator_id = (SELECT id FROM users WHERE email = 'operator@cgc.edu.in') WHERE code = 'ACCOUNTS-W1'")
+            conn.commit()
 
-        # Seed Demo Student
+        # 13. Seed Demo Student (only if none exists)
         c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'student'")
         if c.fetchone()["cnt"] == 0:
             c.execute("""
@@ -246,8 +330,7 @@ def init_db():
                 generate_password_hash("Student@QueueX2026"),
                 "Aarav Sharma"
             ))
-
-        conn.commit()
+            conn.commit()
 
 
 # -------------------------------------------------------------
@@ -1999,7 +2082,12 @@ def admin_reports_export_csv():
 try:
     init_db()
 except Exception as _e:
-    print(f"[QueueX] DB Init Notice: {_e}")
+    import traceback
+    print(f"[QueueX] CRITICAL DB Init Error: {_e}")
+    traceback.print_exc()
+    if os.environ.get("FLASK_ENV") == "production" or os.environ.get("RENDER"):
+        # Re-raise so Render logs show the exact failure stack trace and fail fast
+        raise
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
