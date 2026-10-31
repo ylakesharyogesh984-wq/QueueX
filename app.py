@@ -292,45 +292,57 @@ def init_db():
         except Exception:
             pass
 
-        # 11. Seed Default Admin (only if none exists)
-        c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'admin'")
-        if c.fetchone()["cnt"] == 0:
+        # 11. Seed / Upsert Default Admin (guarantee known working credentials)
+        c.execute("SELECT id FROM users WHERE email = 'admin@cgc.edu.in' OR identifier = 'ADM001'")
+        adm_row = c.fetchone()
+        admin_pw_hash = generate_password_hash("Admin@QueueX2026")
+        if not adm_row:
             c.execute("""
-                INSERT INTO users (email, password_hash, full_name, role, identifier, phone)
-                VALUES (?, ?, ?, 'admin', 'ADM001', '0172-3984200')
-            """, (
-                "admin@cgc.edu.in",
-                generate_password_hash("Admin@QueueX2026"),
-                "CGC Central Queue Administrator"
-            ))
-            conn.commit()
+                INSERT INTO users (email, password_hash, full_name, role, identifier, phone, is_active)
+                VALUES ('admin@cgc.edu.in', ?, 'CGC Central Queue Administrator', 'admin', 'ADM001', '0172-3984200', 1)
+            """, (admin_pw_hash,))
+        else:
+            c.execute("""
+                UPDATE users
+                SET password_hash = ?, role = 'admin', identifier = 'ADM001', is_active = 1
+                WHERE id = ?
+            """, (admin_pw_hash, adm_row["id"]))
+        conn.commit()
 
-        # 12. Seed Default Operator (assigned to Counter 1 - Fee Deposit, only if none exists)
-        c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'operator'")
-        if c.fetchone()["cnt"] == 0:
+        # 12. Seed / Upsert Default Operator (guarantee known working credentials)
+        c.execute("SELECT id FROM users WHERE email = 'operator@cgc.edu.in' OR identifier = 'OP101'")
+        op_row = c.fetchone()
+        op_pw_hash = generate_password_hash("Operator@QueueX2026")
+        if not op_row:
             c.execute("""
-                INSERT INTO users (email, password_hash, full_name, role, identifier, phone)
-                VALUES (?, ?, ?, 'operator', 'OP101', '9876543210')
-            """, (
-                "operator@cgc.edu.in",
-                generate_password_hash("Operator@QueueX2026"),
-                "Accounts Counter Officer"
-            ))
-            c.execute("UPDATE counters SET assigned_operator_id = (SELECT id FROM users WHERE email = 'operator@cgc.edu.in') WHERE code = 'ACCOUNTS-W1'")
-            conn.commit()
+                INSERT INTO users (email, password_hash, full_name, role, identifier, phone, is_active)
+                VALUES ('operator@cgc.edu.in', ?, 'Accounts Counter Officer', 'operator', 'OP101', '9876543210', 1)
+            """, (op_pw_hash,))
+        else:
+            c.execute("""
+                UPDATE users
+                SET password_hash = ?, role = 'operator', identifier = 'OP101', is_active = 1
+                WHERE id = ?
+            """, (op_pw_hash, op_row["id"]))
+        c.execute("UPDATE counters SET assigned_operator_id = (SELECT id FROM users WHERE email = 'operator@cgc.edu.in') WHERE code = 'ACCOUNTS-W1'")
+        conn.commit()
 
-        # 13. Seed Demo Student (only if none exists)
-        c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'student'")
-        if c.fetchone()["cnt"] == 0:
+        # 13. Seed / Upsert Demo Student (guarantee known working credentials)
+        c.execute("SELECT id FROM users WHERE email = 'student@cgc.edu.in' OR identifier = '2201045'")
+        st_row = c.fetchone()
+        st_pw_hash = generate_password_hash("Student@QueueX2026")
+        if not st_row:
             c.execute("""
-                INSERT INTO users (email, password_hash, full_name, role, identifier, phone, department, course, semester)
-                VALUES (?, ?, ?, 'student', '2201045', '9812345678', 'CSE', 'B.Tech', 6)
-            """, (
-                "student@cgc.edu.in",
-                generate_password_hash("Student@QueueX2026"),
-                "Aarav Sharma"
-            ))
-            conn.commit()
+                INSERT INTO users (email, password_hash, full_name, role, identifier, phone, department, course, semester, is_active)
+                VALUES ('student@cgc.edu.in', ?, 'Aarav Sharma', 'student', '2201045', '9812345678', 'CSE', 'B.Tech', 6, 1)
+            """, (st_pw_hash,))
+        else:
+            c.execute("""
+                UPDATE users
+                SET password_hash = ?, role = 'student', identifier = '2201045', is_active = 1
+                WHERE id = ?
+            """, (st_pw_hash, st_row["id"]))
+        conn.commit()
 
 
 # -------------------------------------------------------------
