@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Token #{{ token['token_number'] }} Status – QueueX{% endblock %}
+
+{% block content %}
+<div style="max-width: 640px; margin: 2rem auto; padding: 0 1.5rem;">
+  
+  <div style="margin-bottom: 1.5rem;">
+    <a href="{{ url_for('student_portal') }}" style="font-size: 0.85rem; font-weight: 700; color: var(--qx-blue); display: inline-flex; align-items: center; gap: 0.35rem;">
+      &larr; Back to Student Dashboard
+    </a>
+  </div>
+
+  <div class="neu-card" style="padding: 2.5rem 2rem; text-align: center;">
+    
+    <!-- Status Tag -->
+    <div style="margin-bottom: 1rem;">
+      <span class="badge {% if token['status'] == 'served' %}badge-success{% elif token['status'] == 'serving' %}badge-info{% elif token['status'] == 'waiting' %}badge-warning{% elif token['status'] == 'skipped' %}badge-danger{% else %}badge{% endif %}" style="font-size: 0.85rem; padding: 0.4rem 1rem;" id="badge-status">
+        {% if token['status'] == 'served' %}
+          ✅ SERVICE COMPLETED
+        {% elif token['status'] == 'serving' %}
+          🟢 CURRENTLY SERVING — PROCEED TO DESK!
+        {% elif token['status'] == 'waiting' %}
+          ⏳ WAITING IN VIRTUAL QUEUE
+        {% elif token['status'] == 'skipped' %}
+          ⚠️ TOKEN SKIPPED
+        {% else %}
+          ❌ TOKEN CANCELLED
+        {% endif %}
+      </span>
+    </div>
+
+    <div style="font-size: 0.9rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px;">
+      YOUR TOKEN NUMBER
+    </div>
+
+    <!-- Giant Token Number -->
+    <div style="font-size: 5rem; font-weight: 800; font-family: var(--font-mono); color: var(--qx-blue); line-height: 1.1; margin: 0.5rem 0;">
+      #{{ token['token_number'] }}
+    </div>
+
+    <!-- Counter & Department Info -->
+    <h3 style="font-size: 1.35rem; font-weight: 800; color: var(--qx-navy);">
+      {{ token['counter_name'] }}
+    </h3>
+    <div style="font-size: 0.9rem; color: var(--text-secondary); margin-top: 0.2rem;">
+      {{ token['department_name'] }} • Code: <strong>{{ token['counter_code'] }}</strong>
+    </div>
+    <div style="font-size: 0.82rem; color: var(--text-muted); margin-top: 0.2rem;">
+      📍 Location: <strong>{{ token['building_block'] }}</strong>
+    </div>
+
+    <!-- Queue Position Metrics -->
+    {% if token['status'] in ('waiting', 'serving') %}
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 2rem 0;">
+        <div class="neu-inset" style="padding: 1.25rem 1rem;">
+          <div style="font-size: 0.78rem; font-weight: 700; color: var(--text-muted);">PEOPLE AHEAD</div>
+          <div id="stat-ahead" style="font-size: 2.5rem; font-weight: 800; font-family: var(--font-mono); color: var(--qx-navy); margin-top: 0.25rem;">
+            {{ people_ahead }}
+          </div>
+        </div>
+
+        <div class="neu-inset" style="padding: 1.25rem 1rem;">
+          <div style="font-size: 0.78rem; font-weight: 700; color: var(--text-muted);">ESTIMATED WAIT</div>
+          <div id="stat-wait" style="font-size: 2.5rem; font-weight: 800; font-family: var(--font-mono); color: {% if est_mins > 15 %}var(--danger){% else %}var(--success){% endif %}; margin-top: 0.25rem;">
+            {{ est_mins }}<span style="font-size: 1.2rem;">m</span>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+
+    <!-- QR Code Scan Box -->
+    <div class="neu-inset" style="margin: 1.5rem auto; padding: 1.25rem; max-width: 260px; background: #ffffff; border-radius: var(--radius-md);">
+      <img src="data:image/png;base64,{{ qr_image }}" alt="Verification QR Code" style="width: 170px; height: 170px; margin: 0 auto; display: block;">
+      <div style="font-size: 0.72rem; color: #334155; font-weight: 700; margin-top: 0.5rem; font-family: var(--font-mono);">
+        SCAN AT COUNTER
+      </div>
+      <div style="font-size: 0.65rem; color: #64748b; margin-top: 0.2rem;">
+        CGC Digital Queue Token
+      </div>
+    </div>
+
+    <!-- Live indicator -->
+    {% if token['status'] == 'waiting' %}
+      <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1.5rem;">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--success); display: inline-block; animation: pulse 1.5s infinite;"></span>
+        Live auto-refresh active (Updates every 5 seconds)
+      </div>
+
+      <form method="POST" action="{{ url_for('student_cancel_token', token_id=token['id']) }}" onsubmit="return confirm('Cancel this queue token?');">
+        <button type="submit" class="neu-btn neu-btn-danger" style="width: 100%; padding: 0.75rem;">
+          Cancel Token
+        </button>
+      </form>
+    {% endif %}
+
+  </div>
+</div>
+
+<style>
+@keyframes pulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+</style>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+// Live WebSocket updates with automatic polling fallback
+const tokenId = {{ token['id'] }};
+const counterId = {{ token['counter_id'] }};
+const initialStatus = "{{ token['status'] }}";
+
+if (initialStatus === "waiting" || initialStatus === "serving") {
+  // 1. Fetch function
+  async function refreshStatus() {
+    try {
+      const res = await fetch(`/api/student/token/${tokenId}/status`);
+      if (res.ok) {
+        const data = await res.json();
+        
+        // Update stats
+        const aheadEl = document.getElementById("stat-ahead");
+        const waitEl = document.getElementById("stat-wait");
+        if (aheadEl) aheadEl.innerText = data.people_ahead;
+        if (waitEl) waitEl.innerHTML = `${data.estimated_mins}<span style="font-size: 1.2rem;">m</span>`;
+
+        // If status changed, reload page to refresh action states and banner
+        if (data.status !== initialStatus) {
+          window.location.reload();
+        }
+      }
+    } catch (err) {
+      console.warn("Status update check: ", err);
+    }
+  }
+
+  // 2. Initialize WebSocket if available
+  try {
+    if (typeof io !== "undefined") {
+      const socket = io();
+      socket.on("connect", () => {
+        socket.emit("join_counter", { counter_id: counterId });
+      });
+      socket.on("queue_update", (payload) => {
+        // Instant refresh on any counter activity
+        refreshStatus();
+      });
+    }
+  } catch (socketErr) {
+    console.info("Socket.IO fallback to interval polling active.");
+  }
+
+  // 3. Fallback Interval Polling (every 5 seconds)
+  setInterval(refreshStatus, 5000);
+}
+</script>
+{% endblock %}

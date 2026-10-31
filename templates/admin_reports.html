@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Daily Reports & Analytics – QueueX Admin{% endblock %}
+
+{% block content %}
+<div class="app-layout">
+  
+  <aside class="app-sidebar">
+    <div class="sidebar-user">
+      <strong style="color: var(--qx-navy);">CGC System Admin</strong>
+      <span style="font-size: 0.78rem; color: var(--text-secondary);">Central Administration</span>
+    </div>
+    <a href="{{ url_for('admin_portal') }}" class="sidebar-link">📊 System Dashboard</a>
+    <a href="{{ url_for('admin_departments') }}" class="sidebar-link">🏢 Departments</a>
+    <a href="{{ url_for('admin_counters') }}" class="sidebar-link">🪟 Service Counters</a>
+    <a href="{{ url_for('admin_operators') }}" class="sidebar-link">👨‍💼 Operators</a>
+    <a href="{{ url_for('admin_reports') }}" class="sidebar-link active">📈 Reports & Export</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Board</a>
+  </aside>
+
+  <main class="app-content">
+    
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
+      <div>
+        <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Daily Queue Audit & Analytics</h2>
+        <p style="font-size: 0.88rem; color: var(--text-secondary);">Historical throughput, wait times, and exportable campus records</p>
+      </div>
+
+      <div>
+        <a href="{{ url_for('admin_reports_export_csv', date=selected_date, department_id=selected_dept) }}" class="neu-btn neu-btn-primary" style="font-size: 0.85rem;">
+          📥 Export Filtered CSV Report
+        </a>
+      </div>
+    </div>
+
+    <!-- Filter Bar Card -->
+    <div class="neu-card" style="margin-bottom: 2rem; padding: 1.25rem;">
+      <form method="GET" action="{{ url_for('admin_reports') }}" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+        
+        <div>
+          <label class="form-label">Report Date</label>
+          <input type="date" name="date" class="neu-input" value="{{ selected_date }}" style="width: 170px;">
+        </div>
+
+        <div>
+          <label class="form-label">Department Filter</label>
+          <select name="department_id" class="neu-select" style="width: 240px;">
+            <option value="all">All Departments</option>
+            {% for d in departments %}
+              <option value="{{ d['id'] }}" {% if selected_dept == (d['id']|string) %}selected{% endif %}>
+                {{ d['name'] }} ({{ d['code'] }})
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <button type="submit" class="neu-btn neu-btn-primary" style="padding: 0.72rem 1.4rem;">
+            🔍 Filter Reports
+          </button>
+        </div>
+
+      </form>
+    </div>
+
+    <!-- Summary Metrics for filtered dataset -->
+    <div class="stat-grid" style="margin-bottom: 2rem;">
+      <div class="neu-card stat-card">
+        <div class="stat-title">Filtered Tokens</div>
+        <div class="stat-value" style="color: var(--qx-blue);">{{ summary['total'] }}</div>
+        <div class="stat-desc">Generated for {{ selected_date }}</div>
+      </div>
+
+      <div class="neu-card stat-card">
+        <div class="stat-title">Successfully Served</div>
+        <div class="stat-value" style="color: var(--success);">{{ summary['completed'] }}</div>
+        <div class="stat-desc">Completed interactions</div>
+      </div>
+
+      <div class="neu-card stat-card">
+        <div class="stat-title">Skipped / No-Shows</div>
+        <div class="stat-value" style="color: var(--warning);">{{ summary['skipped'] }}</div>
+        <div class="stat-desc">Unclaimed called tokens</div>
+      </div>
+
+      <div class="neu-card stat-card">
+        <div class="stat-title">Cancelled in Line</div>
+        <div class="stat-value" style="color: var(--danger);">{{ summary['cancelled'] }}</div>
+        <div class="stat-desc">Cancelled by student</div>
+      </div>
+    </div>
+
+    <!-- Detailed Token Records Table -->
+    <h3 style="font-size: 1.25rem; font-weight: 800; color: var(--qx-navy); margin-bottom: 1rem;">Token Activity Log ({{ tokens|length }} Entries)</h3>
+    <div class="neu-card" style="padding: 1rem; overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
+        <thead>
+          <tr style="border-bottom: 2px solid var(--border-subtle); color: var(--text-secondary);">
+            <th style="padding: 0.65rem;">Token #</th>
+            <th style="padding: 0.65rem;">Department</th>
+            <th style="padding: 0.65rem;">Counter</th>
+            <th style="padding: 0.65rem;">Student Name</th>
+            <th style="padding: 0.65rem;">Roll Number</th>
+            <th style="padding: 0.65rem;">Purpose</th>
+            <th style="padding: 0.65rem;">Created</th>
+            <th style="padding: 0.65rem;">Completed</th>
+            <th style="padding: 0.65rem;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in tokens %}
+            <tr style="border-bottom: 1px solid var(--border-subtle);">
+              <td style="padding: 0.65rem; font-weight: 800; font-family: var(--font-mono); color: var(--qx-blue);">
+                #{{ t['token_number'] }}
+              </td>
+              <td style="padding: 0.65rem;">{{ t['department_code'] }}</td>
+              <td style="padding: 0.65rem;">{{ t['counter_name'] }}</td>
+              <td style="padding: 0.65rem; font-weight: 600;">{{ t['student_name'] }}</td>
+              <td style="padding: 0.65rem; font-family: var(--font-mono);">{{ t['student_roll'] }}</td>
+              <td style="padding: 0.65rem;">{{ t['service_reason'] or '—' }}</td>
+              <td style="padding: 0.65rem; font-size: 0.78rem;">{{ t['created_at'][11:19] }}</td>
+              <td style="padding: 0.65rem; font-size: 0.78rem;">{% if t['completed_at'] %}{{ t['completed_at'][11:19] }}{% else %}—{% endif %}</td>
+              <td style="padding: 0.65rem;">
+                {% if t['status'] == 'served' %}
+                  <span class="badge badge-success">Completed</span>
+                {% elif t['status'] == 'serving' %}
+                  <span class="badge badge-info">Serving</span>
+                {% elif t['status'] == 'waiting' %}
+                  <span class="badge badge-warning">Waiting</span>
+                {% elif t['status'] == 'skipped' %}
+                  <span class="badge badge-danger">Skipped</span>
+                {% else %}
+                  <span class="badge" style="background: #e2e8f0; color: #475569;">Cancelled</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="9" style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
+                No token records found for {{ selected_date }}.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </main>
+</div>
+{% endblock %}

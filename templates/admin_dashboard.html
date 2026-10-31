@@ -1,788 +1,191 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#8B5CF6">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="QueueX">
-<title>Admin Command Center — QueueX</title>
-<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
-<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
-<link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<meta name="csrf-token" content="{{ csrf_token() }}">
-</head>
-<body data-interface="admin">
+{% extends "base.html" %}
+{% block title %}Central Admin Console – QueueX{% endblock %}
 
-<!-- TOP NAVBAR (PRESERVED FOR DESKTOP & MOBILE TEST SUITE) -->
-<div class="navbar">
-  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
-  <div class="nav-actions">
-    <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
-    <button class="burger-btn" id="burger-btn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="nav-links">
-      <span class="burger-line"></span>
-      <span class="burger-line"></span>
-      <span class="burger-line"></span>
-    </button>
-  </div>
-  <div class="nav-links" id="nav-links">
-    <span class="badge-role badge-role-admin">🛡️ SUPER ADMIN</span>
-    <a href="{{ url_for('index') }}" class="btn btn-outline btn-sm">Portal Home</a>
-    <a href="{{ url_for('admin_logout') }}" class="btn btn-outline btn-sm">Logout</a>
-  </div>
-</div>
-<div class="nav-backdrop" id="nav-backdrop"></div>
-
-<!-- MODERN DASHBOARD SIDEBAR LAYOUT -->
-<div class="dashboard-layout">
-  <!-- MODERN SIDEBAR -->
-  <aside class="dashboard-sidebar">
-    <div>
-      <div class="sidebar-header">
-        <div class="sidebar-brand-title">Control Terminal</div>
-        <span class="sidebar-role-tag badge-role-admin">🛡️ Super Admin</span>
-      </div>
-
-      <nav class="sidebar-nav">
-        <a href="#section-telemetry" class="sidebar-link active">
-          <span class="icon">📊</span>
-          <span>Telemetry & KPIs</span>
-        </a>
-        <a href="#section-analytics" class="sidebar-link">
-          <span class="icon">📈</span>
-          <span>Analytics & Rush</span>
-        </a>
-        <a href="#section-counters" class="sidebar-link">
-          <span class="icon">🏢</span>
-          <span>Counters & Stations</span>
-        </a>
-        <a href="#section-students" class="sidebar-link">
-          <span class="icon">🎓</span>
-          <span>Student Directory</span>
-        </a>
-        <a href="#section-operators" class="sidebar-link">
-          <span class="icon">⚡</span>
-          <span>Staff & Operators</span>
-        </a>
-        <a href="#section-complaints" class="sidebar-link">
-          <span class="icon">💬</span>
-          <span>Student Feedback</span>
-        </a>
-      </nav>
+{% block content %}
+<div class="app-layout">
+  
+  <!-- Admin Sidebar -->
+  <aside class="app-sidebar">
+    <div class="sidebar-user">
+      <strong style="color: var(--qx-navy); font-size: 0.95rem;">CGC System Admin</strong>
+      <span style="font-size: 0.78rem; color: var(--text-secondary);">Role: Central Queue Administrator</span>
+      <span style="font-size: 0.75rem; color: var(--qx-blue); font-weight: 700; margin-top: 0.2rem;">CGC University Mohali</span>
     </div>
 
-    <div class="sidebar-footer">
-      <div class="sidebar-user-card">
-        <div class="sidebar-user-avatar">SA</div>
-        <div class="sidebar-user-info">
-          <strong>Super Administrator</strong>
-          <span>Apex Tech Campus Node</span>
-        </div>
-      </div>
-      <a href="{{ url_for('admin_logout') }}" class="btn btn-outline btn-sm btn-block">Sign Out</a>
-    </div>
+    <a href="{{ url_for('admin_portal') }}" class="sidebar-link active">📊 System Dashboard</a>
+    <a href="{{ url_for('admin_departments') }}" class="sidebar-link">🏢 Departments</a>
+    <a href="{{ url_for('admin_counters') }}" class="sidebar-link">🪟 Service Counters</a>
+    <a href="{{ url_for('admin_operators') }}" class="sidebar-link">👨‍💼 Operators</a>
+    <a href="{{ url_for('admin_reports') }}" class="sidebar-link">📈 Reports & Export</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Public Live Counters</a>
+    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
   </aside>
 
-  <!-- MAIN COCKPIT -->
-  <main class="dashboard-main">
-    <!-- TELEMETRY STATIONS & GLOBAL KPI OVERVIEW -->
-    <section id="section-telemetry">
-      <div class="dash-header" style="flex-wrap:wrap; gap:16px;">
-        <div>
-          <span class="badge-role badge-role-admin" style="margin-bottom:8px;">EXECUTIVE COCKPIT</span>
-          <h2>Campus Queue Telemetry</h2>
-          <p style="font-size:13.5px; color:var(--text-muted); margin-top:2px;">Real-time database metrics across all campus counters and student throughput</p>
-        </div>
+  <!-- Admin Content -->
+  <main class="app-content">
+    
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
+      <div>
+        <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Central Queue Administration</h2>
+        <p style="font-size: 0.88rem; color: var(--text-secondary);">Real-time metrics, counter operations, and university queue analytics</p>
+      </div>
 
-        <!-- DATE-BASED ANALYTICS FILTER TOOLBAR -->
-        <div class="date-filter-bar">
-          <span style="font-size:12px; font-weight:600; color:var(--text-muted); margin-right:4px;">Period:</span>
-          <button type="button" class="date-pill-btn active" data-date="today" onclick="setDateFilter('today')">Today</button>
-          <button type="button" class="date-pill-btn" data-date="yesterday" onclick="setDateFilter('yesterday')">Yesterday</button>
-          <button type="button" class="date-pill-btn" data-date="7days" onclick="setDateFilter('7days')">7 Days</button>
-          <button type="button" class="date-pill-btn" data-date="30days" onclick="setDateFilter('30days')">30 Days</button>
-          <button type="button" class="date-pill-btn" data-date="all" onclick="setDateFilter('all')">All Time</button>
-          <input type="date" id="date-custom-picker" class="date-custom-input" title="Custom Date" onchange="setDateFilter(this.value)">
-          <button type="button" class="btn btn-outline btn-sm" onclick="refreshCurrentView()" title="Refresh telemetry">⟳ Refresh</button>
+      <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+        <a href="{{ url_for('admin_counters') }}" class="neu-btn neu-btn-primary" style="font-size: 0.85rem;">➕ Manage Counters</a>
+        <a href="{{ url_for('admin_reports') }}" class="neu-btn" style="font-size: 0.85rem;">📥 Daily Report</a>
+      </div>
+    </div>
+
+    <!-- Core Metrics Stat Grid -->
+    <div class="stat-grid">
+      <div class="neu-card stat-card">
+        <div class="stat-title">Tokens Today</div>
+        <div class="stat-value" style="color: var(--qx-blue);">{{ metrics['tokens_today'] }}</div>
+        <div class="stat-desc">{{ metrics['waiting_tokens'] }} waiting • {{ metrics['serving_tokens'] }} serving</div>
+      </div>
+
+      <div class="neu-card stat-card">
+        <div class="stat-title">Served Completed</div>
+        <div class="stat-value" style="color: var(--success);">{{ metrics['served_tokens'] }}</div>
+        <div class="stat-desc">{{ metrics['skipped_tokens'] }} skipped • {{ metrics['cancelled_tokens'] }} cancelled</div>
+      </div>
+
+      <div class="neu-card stat-card">
+        <div class="stat-title">Active Desks</div>
+        <div class="stat-value" style="color: var(--qx-navy);">{{ metrics['open_counters'] }}/{{ metrics['total_counters'] }}</div>
+        <div class="stat-desc">{{ metrics['paused_counters'] }} paused • {{ metrics['closed_counters'] }} closed</div>
+      </div>
+
+      <div class="neu-card stat-card">
+        <div class="stat-title">Students Registered</div>
+        <div class="stat-value" style="color: var(--text-primary);">{{ metrics['total_students'] }}</div>
+        <div class="stat-desc">{{ metrics['total_operators'] }} operators active</div>
+      </div>
+    </div>
+
+    <!-- Chart & Department Queue Grid -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1.5rem; margin-bottom: 2.5rem;">
+      
+      <!-- Chart.js Graph -->
+      <div class="neu-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--qx-navy);">Weekly Queue Traffic Trend</h3>
+          <span style="font-size: 0.75rem; color: var(--text-muted);">Last 7 Days</span>
+        </div>
+        <div style="position: relative; height: 260px; width: 100%;">
+          <canvas id="trafficChart"></canvas>
         </div>
       </div>
 
-      <!-- KEY PERFORMANCE INDICATORS (ROW 1: CAMPUS ASSETS) -->
-      <div class="grid-4" style="margin-bottom:20px;">
-        <div class="card overview-card">
-          <h4>Total Students</h4>
-          <div class="big" id="stat-students-total">0</div>
-          <div class="sub" id="stat-students-sub">0 verified active</div>
+      <!-- Department Queue Load -->
+      <div class="neu-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--qx-navy);">Department Queue Load</h3>
+          <a href="{{ url_for('admin_departments') }}" style="font-size: 0.8rem; font-weight: 600; color: var(--qx-blue);">View All &rarr;</a>
         </div>
-        <div class="card overview-card">
-          <h4>Campus Operators</h4>
-          <div class="big" id="stat-operators-total">0</div>
-          <div class="sub" id="stat-operators-sub">0 assigned active</div>
-        </div>
-        <div class="card overview-card">
-          <h4>Active Counters</h4>
-          <div class="big" id="stat-counters">0</div>
-          <div class="sub" id="stat-counters-sub">Operational stations</div>
-        </div>
-        <div class="card overview-card">
-          <h4>Pending Feedback</h4>
-          <div class="big" id="stat-complaints-count" style="color:var(--amber-light);">0</div>
-          <div class="sub">Unresolved inquiries</div>
+
+        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+          {% for d in dept_stats %}
+            <div class="neu-inset" style="padding: 0.75rem 1rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                  <strong style="font-size: 0.92rem; color: var(--text-primary);">{{ d['name'] }}</strong>
+                  <div style="font-size: 0.75rem; color: var(--text-muted);">{{ d['code'] }} • {{ d['counter_count'] }} counters</div>
+                </div>
+                <div style="text-align: right;">
+                  <span class="badge {% if d['waiting_tokens'] > 5 %}badge-danger{% else %}badge-info{% endif %}">
+                    {{ d['waiting_tokens'] }} Waiting
+                  </span>
+                  <div style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.2rem;">
+                    {{ d['served_today'] }} served today
+                  </div>
+                </div>
+              </div>
+            </div>
+          {% endfor %}
         </div>
       </div>
 
-      <!-- KEY PERFORMANCE INDICATORS (ROW 2: TOKEN THROUGHPUT IN SELECTED PERIOD) -->
-      <div class="grid-4" style="margin-bottom:28px;">
-        <div class="card overview-card">
-          <h4>Tokens Issued (<span class="period-label">Today</span>)</h4>
-          <div class="big" id="stat-total">0</div>
-          <div class="sub">Total generated passes</div>
-        </div>
-        <div class="card overview-card">
-          <h4>Currently Waiting</h4>
-          <div class="big" id="stat-waiting" style="color:var(--cyan-light);">0</div>
-          <div class="sub">Students standing in queue</div>
-        </div>
-        <div class="card overview-card">
-          <h4>Completed & Served</h4>
-          <div class="big" id="stat-served" style="color:var(--emerald-light);">0</div>
-          <div class="sub">Successfully processed</div>
-        </div>
-        <div class="card overview-card">
-          <h4>Average Wait Time</h4>
-          <div class="big" id="stat-wait">0m</div>
-          <div class="sub" id="stat-busiest-sub">Peak: N/A</div>
-        </div>
-      </div>
+    </div>
 
-      <!-- LIVE COUNTER STATIONS STREAM -->
-      <h3 style="font-size:17px; margin-bottom:14px; display:flex; align-items:center; gap:8px;">
-        <span>🏢 Live Counter Telemetry Stream</span>
-      </h3>
-      <div class="grid-4" id="overview-grid" style="margin-bottom:36px;"></div>
-    </section>
-
-    <!-- ANALYTICS CHARTS SECTION -->
-    <section id="section-analytics" style="margin-bottom:36px;">
-      <div class="dash-header" style="border-bottom:none; margin-bottom:16px;">
-        <div>
-          <span class="badge-role badge-role-admin" style="font-size:11px;">DEEP TELEMETRY</span>
-          <h3 style="margin-top:8px; font-size:20px;">Queue Analytics & Throughput (<span class="period-label">Today</span>)</h3>
-          <p style="font-size:13px; color:var(--text-muted); margin-top:2px;">
-            Comprehensive volume patterns, peak rush hours, status distribution, and department breakdown.
-          </p>
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:24px; margin-bottom:24px;">
-        <div class="chart-card">
-          <h3>📊 Tokens per Counter</h3>
-          <div class="chart-wrapper">
-            <canvas id="counterChart"></canvas>
-          </div>
-        </div>
-        <div class="chart-card">
-          <h3>📈 Peak Campus Rush Hours</h3>
-          <div class="chart-wrapper">
-            <canvas id="peakChart"></canvas>
-          </div>
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:24px;">
-        <div class="chart-card">
-          <h3>🍩 Token Status Breakdown</h3>
-          <div class="chart-wrapper">
-            <canvas id="statusChart"></canvas>
-          </div>
-        </div>
-        <div class="chart-card">
-          <h3>🎓 Department-Wise Volume</h3>
-          <div class="chart-wrapper">
-            <canvas id="deptChart"></canvas>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- COUNTER & STATION MANAGEMENT CONSOLE -->
-    <section id="section-counters" class="card" style="margin-bottom:36px;">
-      <div class="dash-header" style="border-bottom:none; margin-bottom:16px;">
-        <div>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <span class="badge-role badge-role-admin" style="font-size:11px;">CAMPUS INFRASTRUCTURE</span>
-            <span class="badge-role" style="font-size:11px; color:var(--emerald-light);" id="counters-badge">ACTIVE COUNTERS</span>
-          </div>
-          <h3 style="margin-top:8px; font-size:20px;">Counter Station Management</h3>
-          <p style="font-size:13px; color:var(--text-muted); margin-top:2px;">
-            Add, configure, pause, deactivate, or edit campus service counters and assign operational staff.
-          </p>
-        </div>
-        <div>
-          <button type="button" class="btn btn-primary btn-sm" onclick="openAddCounterModal()">+ Add New Counter</button>
-        </div>
-      </div>
-
-      <div class="data-table-wrap">
-        <table class="data-table" id="counters-table">
+    <!-- Recent Audit Logs -->
+    <div style="margin-bottom: 2rem;">
+      <h3 style="font-size: 1.25rem; font-weight: 800; color: var(--qx-navy); margin-bottom: 1rem;">System Audit & Operational Log</h3>
+      <div class="neu-card" style="padding: 1rem; overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
           <thead>
-            <tr>
-              <th>Counter Station</th>
-              <th>Location & Hours</th>
-              <th>Status</th>
-              <th>Queue Throughput</th>
-              <th>Assigned Staff</th>
-              <th>Actions</th>
+            <tr style="border-bottom: 2px solid var(--border-subtle); color: var(--text-secondary);">
+              <th style="padding: 0.6rem;">Timestamp</th>
+              <th style="padding: 0.6rem;">Action Type</th>
+              <th style="padding: 0.6rem;">Initiator</th>
+              <th style="padding: 0.6rem;">Operation Details</th>
             </tr>
           </thead>
-          <tbody id="counters-tbody">
-            <tr><td colspan="6" class="table-empty-cell"><div class="spinner"></div><p>Loading counter stations...</p></td></tr>
+          <tbody>
+            {% for a in recent_audits %}
+              <tr style="border-bottom: 1px solid var(--border-subtle);">
+                <td style="padding: 0.6rem; font-size: 0.8rem; color: var(--text-muted);">{{ a['created_at'][:19] }}</td>
+                <td style="padding: 0.6rem;">
+                  <span class="badge badge-info">{{ a['action'] }}</span>
+                </td>
+                <td style="padding: 0.6rem; font-weight: 600;">{{ a['user_role']|capitalize }} #{{ a['user_id'] }}</td>
+                <td style="padding: 0.6rem;">{{ a['details'] }}</td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="4" style="text-align: center; padding: 1.5rem; color: var(--text-muted);">No audit events recorded yet.</td>
+              </tr>
+            {% endfor %}
           </tbody>
         </table>
       </div>
-    </section>
+    </div>
 
-    <!-- STUDENT DATABASE MANAGEMENT CONSOLE -->
-    <section id="section-students" class="card" style="margin-bottom:36px;">
-      <div class="dash-header" style="border-bottom:none; margin-bottom:16px;">
-        <div>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <span class="badge-role badge-role-admin" style="font-size:11px;">CAMPUS REGISTRY</span>
-            <span class="badge-role" style="font-size:11px; color:var(--cyan-light);" id="students-badge">STUDENT REGISTRY</span>
-          </div>
-          <h3 style="margin-top:8px; font-size:20px;">Student Database & Token Registry</h3>
-          <p style="font-size:13px; color:var(--text-muted); margin-top:2px;">
-            Administrative control to search, edit, inspect individual passes, and manage student enrollment.
-          </p>
-        </div>
-        <div>
-          <button type="button" class="btn btn-primary btn-sm" onclick="openAddStudentModal()">+ Add New Student</button>
-        </div>
-      </div>
-
-      <!-- Table Toolbar -->
-      <div class="table-toolbar">
-        <div class="table-filters">
-          <input type="text" id="student-search-input" placeholder="Search by ID, Name, Roll, or Phone..." class="input-search">
-          <select id="student-dept-select">
-            <option value="all">All Departments</option>
-          </select>
-        </div>
-        <div style="font-size:12.5px; color:var(--text-muted); font-family:var(--font-mono);">
-          Showing <span id="student-count-display">0</span> records
-        </div>
-      </div>
-
-      <!-- Data Table -->
-      <div class="data-table-wrap">
-        <table class="data-table" id="students-table">
-          <thead>
-            <tr>
-              <th>Unique ID</th>
-              <th>Student Name & Roll</th>
-              <th>Department</th>
-              <th>Semester</th>
-              <th>Contact</th>
-              <th>Status</th>
-              <th>Queue Passes</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="students-tbody">
-            <tr><td colspan="8" class="table-empty-cell"><div class="spinner"></div><p>Loading student directory...</p></td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- STAFF & OPERATOR MANAGEMENT CONSOLE -->
-    <section id="section-operators" class="card" style="margin-bottom:36px;">
-      <div class="dash-header" style="border-bottom:none; margin-bottom:16px;">
-        <div>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <span class="badge-role badge-role-operator" style="font-size:11px;">CAMPUS WORKFORCE</span>
-            <span class="badge-role" style="font-size:11px; color:var(--amber-light);" id="employees-badge">OPERATOR TERMINALS</span>
-          </div>
-          <h3 style="margin-top:8px; font-size:20px;">Counter Operators & Staff Directory</h3>
-          <p style="font-size:13px; color:var(--text-muted); margin-top:2px;">
-            Manage staff credentials, assigned counter stations, and terminal access permissions.
-          </p>
-        </div>
-        <div>
-          <button type="button" class="btn btn-primary btn-sm" onclick="openAddEmployeeModal()">+ Add New Operator</button>
-        </div>
-      </div>
-
-      <div class="data-table-wrap">
-        <table class="data-table" id="employees-table">
-          <thead>
-            <tr>
-              <th>Employee ID</th>
-              <th>Staff Name</th>
-              <th>Assigned Station</th>
-              <th>Contact / Login</th>
-              <th>Served (<span class="period-label">Today</span>)</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="employees-tbody">
-            <tr><td colspan="7" class="table-empty-cell"><div class="spinner"></div><p>Loading operator records...</p></td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- STUDENT COMPLAINTS & FEEDBACK CONSOLE -->
-    <section id="section-complaints" class="card">
-      <div class="dash-header" style="border-bottom:none; margin-bottom:16px;">
-        <div>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <span class="badge-role badge-role-admin" style="font-size:11px;">FEEDBACK & GRIEVANCE</span>
-            <span class="badge-role" style="font-size:11px; color:var(--rose-light);" id="complaints-badge">STUDENT TICKETS</span>
-          </div>
-          <h3 style="margin-top:8px; font-size:20px;">Student Complaints & Feedback Desk</h3>
-          <p style="font-size:13px; color:var(--text-muted); margin-top:2px;">
-            Review student grievances, inquiries, and suggestions with direct administrative resolution responses.
-          </p>
-        </div>
-      </div>
-
-      <!-- Table Toolbar -->
-      <div class="table-toolbar">
-        <div class="table-filters">
-          <input type="text" id="complaints-search-input" placeholder="Search feedback by keyword, student or roll..." class="input-search">
-          <select id="complaints-status-select" onchange="loadComplaints()">
-            <option value="all">All Feedback</option>
-            <option value="pending" selected>Pending Review</option>
-            <option value="resolved">Resolved</option>
-          </select>
-        </div>
-        <div style="font-size:12.5px; color:var(--text-muted); font-family:var(--font-mono);">
-          Showing <span id="complaints-count-display">0</span> tickets
-        </div>
-      </div>
-
-      <div class="data-table-wrap">
-        <table class="data-table" id="complaints-table">
-          <thead>
-            <tr>
-              <th>Student Details</th>
-              <th>Category</th>
-              <th>Subject & Preview</th>
-              <th>Submitted</th>
-              <th>Status</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="complaints-tbody">
-            <tr><td colspan="6" class="table-empty-cell"><div class="spinner"></div><p>Loading complaints...</p></td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
   </main>
 </div>
 
-<!-- ================= MODALS ================= -->
-
-<!-- Add Counter Modal -->
-<div class="student-modal-backdrop" id="add-counter-modal" onclick="closeAddCounterModal()">
-  <div class="student-modal-card" onclick="event.stopPropagation()">
-    <button type="button" class="modal-close-btn" onclick="closeAddCounterModal()">&times;</button>
-    <span class="badge-role badge-role-admin">CAMPUS FACILITY</span>
-    <h3 style="margin-top:8px; font-size:20px;">Add New Campus Counter</h3>
-    <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
-      Provision a new service station for campus departments and students.
-    </p>
-
-    <form id="add-counter-form" onsubmit="submitAddCounter(event)">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="ac-name">Counter Name *</label>
-          <input type="text" id="ac-name" name="name" placeholder="e.g. Scholarship & Grants" required>
-        </div>
-        <div>
-          <label for="ac-slug">Custom Slug (Optional)</label>
-          <input type="text" id="ac-slug" name="slug" placeholder="e.g. scholarship">
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="ac-location">Location / Room *</label>
-          <input type="text" id="ac-location" name="location" placeholder="e.g. Admin Block Room 104" required>
-        </div>
-        <div>
-          <label for="ac-hours">Operating Hours</label>
-          <input type="text" id="ac-hours" name="operating_hours" placeholder="e.g. 09:00 AM - 04:30 PM">
-        </div>
-      </div>
-
-      <div style="margin-bottom:16px;">
-        <label for="ac-desc">Description & Purpose</label>
-        <textarea id="ac-desc" name="description" rows="2" style="width:100%; border-radius:var(--radius-sm); padding:8px 12px; background:var(--input-bg); border:1px solid var(--input-border); color:var(--text-primary); font-family:var(--font-body);" placeholder="e.g. Verification of state & national scholarship certificates"></textarea>
-      </div>
-
-      <button type="submit" class="btn btn-primary btn-block" id="ac-submit-btn">
-        🏢 Create Campus Counter
-      </button>
-    </form>
-  </div>
-</div>
-
-<!-- Edit Counter Modal -->
-<div class="student-modal-backdrop" id="edit-counter-modal" onclick="closeEditCounterModal()">
-  <div class="student-modal-card" onclick="event.stopPropagation()">
-    <button type="button" class="modal-close-btn" onclick="closeEditCounterModal()">&times;</button>
-    <span class="badge-role badge-role-admin">MODIFY STATION</span>
-    <h3 style="margin-top:8px; font-size:20px;">Edit Campus Counter</h3>
-    <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
-      Update counter location, hours, or operational description.
-    </p>
-
-    <form id="edit-counter-form" onsubmit="submitEditCounter(event)">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="hidden" id="ec-id" name="counter_id">
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="ec-name">Counter Name *</label>
-          <input type="text" id="ec-name" name="name" required>
-        </div>
-        <div>
-          <label for="ec-status">Operational State</label>
-          <select id="ec-status" name="status">
-            <option value="open">Open / Live</option>
-            <option value="paused">Paused</option>
-            <option value="closed">Closed</option>
-            <option value="deactivated">Deactivated</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="ec-location">Location / Room *</label>
-          <input type="text" id="ec-location" name="location" required>
-        </div>
-        <div>
-          <label for="ec-hours">Operating Hours</label>
-          <input type="text" id="ec-hours" name="operating_hours">
-        </div>
-      </div>
-
-      <div style="margin-bottom:16px;">
-        <label for="ec-desc">Description</label>
-        <textarea id="ec-desc" name="description" rows="2" style="width:100%; border-radius:var(--radius-sm); padding:8px 12px; background:var(--input-bg); border:1px solid var(--input-border); color:var(--text-primary); font-family:var(--font-body);"></textarea>
-      </div>
-
-      <button type="submit" class="btn btn-primary btn-block" id="ec-submit-btn">
-        💾 Save Counter Changes
-      </button>
-    </form>
-  </div>
-</div>
-
-<!-- Add Student Modal -->
-<div class="student-modal-backdrop" id="add-student-modal" onclick="closeAddStudentModal()">
-  <div class="student-modal-card" onclick="event.stopPropagation()">
-    <button type="button" class="modal-close-btn" onclick="closeAddStudentModal()">&times;</button>
-    <span class="badge-role badge-role-student">ENROLL STUDENT</span>
-    <h3 style="margin-top:8px; font-size:20px;">Add New Enrolled Student</h3>
-    <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
-      Enrolling a student guarantees access to generate live queue tokens and sign in.
-    </p>
-
-    <form id="add-student-form" onsubmit="submitAddStudent(event)">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="as-name">Full Name *</label>
-          <input type="text" id="as-name" name="full_name" placeholder="e.g. Priyanshu Roy" required>
-        </div>
-        <div>
-          <label for="as-roll">Roll Number *</label>
-          <input type="text" id="as-roll" name="roll_no" placeholder="e.g. 24CS45" required>
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="as-dept">Department *</label>
-          <select id="as-dept" name="department" required>
-            <option value="Computer Science">Computer Science</option>
-            <option value="AI & Data Science">AI & Data Science</option>
-            <option value="Electronics & Communication">Electronics & Communication</option>
-            <option value="Mechanical Engineering">Mechanical Engineering</option>
-            <option value="Civil Engineering">Civil Engineering</option>
-          </select>
-        </div>
-        <div>
-          <label for="as-sem">Semester</label>
-          <select id="as-sem" name="semester">
-            <option value="1st">1st Semester</option>
-            <option value="2nd">2nd Semester</option>
-            <option value="3rd">3rd Semester</option>
-            <option value="4th">4th Semester</option>
-            <option value="5th">5th Semester</option>
-            <option value="6th">6th Semester</option>
-            <option value="7th">7th Semester</option>
-            <option value="8th">8th Semester</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="as-uid">Custom Student ID (Optional)</label>
-          <input type="text" id="as-uid" name="student_uid" placeholder="Leave empty to auto-generate">
-        </div>
-        <div>
-          <label for="as-phone">Mobile Phone (10 digits)</label>
-          <input type="tel" id="as-phone" name="phone" placeholder="e.g. 9811223344" pattern="[0-9]{10}">
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="as-email">Official Email (Optional)</label>
-          <input type="email" id="as-email" name="email" placeholder="e.g. roy@ait.edu">
-        </div>
-        <div>
-          <label for="as-pw">Login Password</label>
-          <input type="password" id="as-pw" name="password" placeholder="Default: student123">
-        </div>
-      </div>
-
-      <button type="submit" class="btn btn-primary btn-block" style="margin-top:16px;" id="as-submit-btn">
-        🚀 Save & Enroll Student
-      </button>
-    </form>
-  </div>
-</div>
-
-<!-- Edit Student Modal -->
-<div class="student-modal-backdrop" id="edit-student-modal" onclick="closeEditStudentModal()">
-  <div class="student-modal-card" onclick="event.stopPropagation()">
-    <button type="button" class="modal-close-btn" onclick="closeEditStudentModal()">&times;</button>
-    <span class="badge-role badge-role-student">STUDENT RECORD</span>
-    <h3 style="margin-top:8px; font-size:20px;">Edit Student Record</h3>
-    <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
-      Update academic profile and contact details.
-    </p>
-
-    <form id="edit-student-form" onsubmit="submitEditStudent(event)">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="hidden" id="es-id" name="student_id">
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="es-name">Full Name *</label>
-          <input type="text" id="es-name" name="full_name" required>
-        </div>
-        <div>
-          <label for="es-roll">Roll Number *</label>
-          <input type="text" id="es-roll" name="roll_no" required>
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="es-dept">Department *</label>
-          <select id="es-dept" name="department" required>
-            <option value="Computer Science">Computer Science</option>
-            <option value="AI & Data Science">AI & Data Science</option>
-            <option value="Electronics & Communication">Electronics & Communication</option>
-            <option value="Mechanical Engineering">Mechanical Engineering</option>
-            <option value="Civil Engineering">Civil Engineering</option>
-          </select>
-        </div>
-        <div>
-          <label for="es-sem">Semester</label>
-          <select id="es-sem" name="semester">
-            <option value="1st">1st Semester</option>
-            <option value="2nd">2nd Semester</option>
-            <option value="3rd">3rd Semester</option>
-            <option value="4th">4th Semester</option>
-            <option value="5th">5th Semester</option>
-            <option value="6th">6th Semester</option>
-            <option value="7th">7th Semester</option>
-            <option value="8th">8th Semester</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="es-phone">Mobile Phone</label>
-          <input type="tel" id="es-phone" name="phone" pattern="[0-9]{10}">
-        </div>
-        <div>
-          <label for="es-email">Email Address</label>
-          <input type="email" id="es-email" name="email">
-        </div>
-      </div>
-
-      <button type="submit" class="btn btn-primary btn-block" style="margin-top:16px;" id="es-submit-btn">
-        💾 Save Student Changes
-      </button>
-    </form>
-  </div>
-</div>
-
-<!-- Add Employee Modal -->
-<div class="student-modal-backdrop" id="add-employee-modal" onclick="closeAddEmployeeModal()">
-  <div class="student-modal-card" onclick="event.stopPropagation()">
-    <button type="button" class="modal-close-btn" onclick="closeAddEmployeeModal()">&times;</button>
-    <span class="badge-role badge-role-operator">STAFF PROVISIONING</span>
-    <h3 style="margin-top:8px; font-size:20px;">Provision Counter Operator</h3>
-    <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
-      Create an operator account authorized to call, recall, and serve counter tokens.
-    </p>
-
-    <form id="add-employee-form" onsubmit="submitAddEmployee(event)">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="ae-name">Full Name *</label>
-          <input type="text" id="ae-name" name="full_name" placeholder="e.g. Sunita Deshmukh" required>
-        </div>
-        <div>
-          <label for="ae-id">Employee ID *</label>
-          <input type="text" id="ae-id" name="employee_id" placeholder="e.g. OP-105" required>
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="ae-station">Assigned Station</label>
-          <select id="ae-station" name="assigned_counter">
-            <option value="">All / Float Operator</option>
-            {% for c in counters %}
-            <option value="{{ c.slug }}">{{ c.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div>
-          <label for="ae-phone">Mobile Phone</label>
-          <input type="tel" id="ae-phone" name="phone" placeholder="10-digit mobile" pattern="[0-9]{10}">
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="ae-email">Login Email</label>
-          <input type="email" id="ae-email" name="email" placeholder="e.g. sunita@queuex.internal">
-        </div>
-        <div>
-          <label for="ae-pw">Password *</label>
-          <input type="password" id="ae-pw" name="password" placeholder="Min 6 characters" required minlength="6">
-        </div>
-      </div>
-
-      <button type="submit" class="btn btn-primary btn-block" style="margin-top:16px;" id="ae-submit-btn">
-        ⚡ Create Operator Terminal Access
-      </button>
-    </form>
-  </div>
-</div>
-
-<!-- Edit Employee Modal -->
-<div class="student-modal-backdrop" id="edit-employee-modal" onclick="closeEditEmployeeModal()">
-  <div class="student-modal-card" onclick="event.stopPropagation()">
-    <button type="button" class="modal-close-btn" onclick="closeEditEmployeeModal()">&times;</button>
-    <span class="badge-role badge-role-operator">STAFF RECORD</span>
-    <h3 style="margin-top:8px; font-size:20px;">Edit Staff / Operator</h3>
-    <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
-      Update operator station assignment and contact details.
-    </p>
-
-    <form id="edit-employee-form" onsubmit="submitEditEmployee(event)">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="hidden" id="ee-id" name="user_id">
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="ee-name">Full Name *</label>
-          <input type="text" id="ee-name" name="full_name" required>
-        </div>
-        <div>
-          <label for="ee-id-val">Employee ID *</label>
-          <input type="text" id="ee-id-val" name="employee_id" required>
-        </div>
-      </div>
-
-      <div class="grid-2" style="gap:12px; margin-bottom:12px;">
-        <div>
-          <label for="ee-station">Assigned Counter Station</label>
-          <select id="ee-station" name="assigned_counter">
-            <option value="">All / Float Operator</option>
-            {% for c in counters %}
-            <option value="{{ c.slug }}">{{ c.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div>
-          <label for="ee-phone">Mobile Phone</label>
-          <input type="tel" id="ee-phone" name="phone" pattern="[0-9]{10}">
-        </div>
-      </div>
-
-      <div style="margin-bottom:16px;">
-        <label for="ee-email">Login Email</label>
-        <input type="email" id="ee-email" name="email">
-      </div>
-
-      <button type="submit" class="btn btn-primary btn-block" id="ee-submit-btn">
-        💾 Save Staff Changes
-      </button>
-    </form>
-  </div>
-</div>
-
-<!-- Student History Modal -->
-<div class="student-modal-backdrop" id="student-modal" onclick="closeStudentModal()">
-  <div class="student-modal-card" onclick="event.stopPropagation()">
-    <button type="button" class="modal-close-btn" onclick="closeStudentModal()">&times;</button>
-    <div id="modal-content"></div>
-  </div>
-</div>
-
-<!-- Reply / Review Complaint Modal -->
-<div class="student-modal-backdrop" id="reply-complaint-modal" onclick="closeReplyComplaintModal()">
-  <div class="student-modal-card" onclick="event.stopPropagation()">
-    <button type="button" class="modal-close-btn" onclick="closeReplyComplaintModal()">&times;</button>
-    <span class="badge-role badge-role-admin">RESOLUTION DESK</span>
-    <h3 style="margin-top:8px; font-size:20px;">Review Student Inquiry</h3>
-    <div id="complaint-detail-content" style="margin: 16px 0;"></div>
-
-    <form id="reply-complaint-form" onsubmit="submitReplyComplaint(event)">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="hidden" id="rc-id" name="complaint_id">
-      <div style="margin-bottom:14px;">
-        <label for="rc-status">Status Resolution</label>
-        <select id="rc-status" name="status" required>
-          <option value="resolved">Mark as Resolved & Closed</option>
-          <option value="pending">Keep as Pending</option>
-        </select>
-      </div>
-
-      <div style="margin-bottom:16px;">
-        <label for="rc-reply">Official Admin Response *</label>
-        <textarea id="rc-reply" name="admin_reply" rows="4" style="width:100%; border-radius:var(--radius-sm); padding:10px 12px; background:var(--input-bg); border:1px solid var(--input-border); color:var(--text-primary); font-family:var(--font-body);" placeholder="Type resolution details here... The student will be notified." required></textarea>
-      </div>
-
-      <button type="submit" class="btn btn-primary btn-block" id="rc-submit-btn">
-        ✉️ Submit Resolution & Notify Student
-      </button>
-    </form>
-  </div>
-</div>
-
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
-<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
-<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
-</body>
-</html>
+<!-- Chart.js CDN for Clean Responsive Graphs -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  const ctx = document.getElementById('trafficChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: {{ chart_labels | tojson }},
+      datasets: [
+        {
+          label: 'Tokens Generated',
+          data: {{ chart_generated | tojson }},
+          borderColor: '#1d4ed8',
+          backgroundColor: 'rgba(29, 78, 216, 0.1)',
+          tension: 0.3,
+          fill: true,
+          pointRadius: 4
+        },
+        {
+          label: 'Completed Services',
+          data: {{ chart_completed | tojson }},
+          borderColor: '#059669',
+          backgroundColor: 'rgba(5, 150, 105, 0.1)',
+          tension: 0.3,
+          fill: true,
+          pointRadius: 4
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }
+      },
+      scales: {
+        y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' } },
+        x: { grid: { display: false } }
+      }
+    }
+  });
+});
+</script>
+{% endblock %}

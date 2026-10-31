@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Operator Settings – QueueX{% endblock %}
+
+{% block content %}
+<div class="app-layout">
+  
+  <aside class="app-sidebar">
+    <div class="sidebar-user">
+      <strong style="color: var(--qx-navy);">{{ operator['full_name'] }}</strong>
+      <span style="font-size: 0.78rem; color: var(--text-secondary);">Employee ID: {{ operator['identifier'] }}</span>
+    </div>
+
+    <a href="{{ url_for('operator_portal') }}" class="sidebar-link">🖥️ Counter Operations</a>
+    <a href="{{ url_for('operator_profile') }}" class="sidebar-link">👤 Operator Profile</a>
+    <a href="{{ url_for('operator_settings') }}" class="sidebar-link active">⚙️ Account Settings</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Board</a>
+    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+  </aside>
+
+  <main class="app-content">
+    
+    <div style="margin-bottom: 2rem;">
+      <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Operator Account Settings</h2>
+      <p style="font-size: 0.88rem; color: var(--text-secondary);">Security credentials, appearance preferences, and system access</p>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem;">
+      
+      <!-- Password Change -->
+      <div class="neu-card">
+        <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--qx-navy); margin-bottom: 1.25rem;">Security & Password</h3>
+        
+        <form method="POST" action="{{ url_for('operator_settings') }}">
+          <input type="hidden" name="action" value="change_password">
+
+          <div class="form-group">
+            <label class="form-label">Current Password</label>
+            <input type="password" name="current_password" class="neu-input" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">New Password (min 6 characters)</label>
+            <input type="password" name="new_password" class="neu-input" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Confirm New Password</label>
+            <input type="password" name="confirm_password" class="neu-input" required>
+          </div>
+
+          <button type="submit" class="neu-btn neu-btn-primary" style="width: 100%; margin-top: 0.5rem;">
+            Update Operator Password
+          </button>
+        </form>
+      </div>
+
+      <!-- Theme & Support -->
+      <div class="neu-card">
+        <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--qx-navy); margin-bottom: 1.25rem;">Appearance & Session</h3>
+
+        <div class="neu-inset" style="padding: 1rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <strong style="font-size: 0.95rem; color: var(--text-primary);">Desk Interface Theme</strong>
+            <div style="font-size: 0.78rem; color: var(--text-secondary);">Toggle Light or Dark Mode</div>
+          </div>
+          <button class="neu-btn" onclick="toggleTheme()" style="padding: 0.45rem 1rem; font-size: 0.85rem;">
+            Toggle Theme 🌓
+          </button>
+        </div>
+
+        <div class="neu-inset" style="padding: 1rem; margin-bottom: 1.5rem;">
+          <strong style="font-size: 0.95rem; color: var(--text-primary); display: block; margin-bottom: 0.25rem;">CGC IT & Queue Support</strong>
+          <p style="font-size: 0.8rem; color: var(--text-secondary);">
+            Counter display screens, QR thermal scanner hardware issues, or printer connection inquiries.
+          </p>
+          <div style="margin-top: 0.5rem; font-size: 0.82rem;">
+            📞 IT Helpdesk: <strong>0172-3984200 (Ext. 104)</strong>
+          </div>
+        </div>
+
+        <div>
+          <a href="{{ url_for('logout') }}" class="neu-btn neu-btn-danger" style="width: 100%;">
+            Sign Out of Operator Desk
+          </a>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+</div>
+{% endblock %}

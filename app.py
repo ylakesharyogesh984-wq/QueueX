@@ -1,3173 +1,2006 @@
+"""
+QueueX - Smart Virtual Queue Management System
+Target: CGC University, Mohali, Punjab, India
+Foundation & Complete Student Portal Implementation
+"""
+
 import os
-import re
+import io
+import csv
+import base64
 import secrets
-import hashlib
-import hmac
+import datetime
 import threading
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, send_from_directory, abort
-from flask_socketio import SocketIO, join_room, leave_room, emit
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from werkzeug.security import generate_password_hash, check_password_hash
-import sqlite3
-from datetime import datetime, timedelta
-from seed_data import seed_100_students, seed_primary_college, PRIMARY_COLLEGE
-
-app = Flask(__name__)
-app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.jinja_env.auto_reload = True
-
-# ---------- SESSION & COOKIE SECURITY ----------
-app.secret_key = os.environ.get("SECRET_KEY", "queuex_secret_key_change_later")
-app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-# In production with HTTPS set SESSION_COOKIE_SECURE = True via env or Railway environment
-app.config["SESSION_COOKIE_SECURE"] = os.environ.get(
-    "SESSION_COOKIE_SECURE",
-    "true" if os.environ.get("RAILWAY_ENVIRONMENT") else "false"
-).lower() == "true"
-app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
-app.config["DEBUG"] = os.environ.get("FLASK_DEBUG", "0") == "1"
-
-# Production Socket.IO setup with optional Redis message queue
-_redis_url = os.environ.get("REDIS_URL")
-if _redis_url:
-    socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*", message_queue=_redis_url)
-else:
-    socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
-
-# ---------- RATE LIMITER ----------
-limiter = Limiter(
-    get_remote_address,
-    app=app,
-    default_limits=[],           # No global limit; apply per-route only
-    storage_uri="memory://",
+from functools import wraps
+from flask import (
+    Flask, render_template, request, redirect, url_for, session,
+    flash, jsonify, Response
 )
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_socketio import SocketIO, emit, join_room, leave_room
+import qrcode
 
 import db
 
-APP_START_TIME = datetime.now()
+app = Flask(__name__)
 
+# Secure secret key handling: use env var or generate a strong fallback
+app.secret_key = os.environ.get("SECRET_KEY")
+if not app.secret_key:
+    # In development or if not set, fallback gracefully
+    app.secret_key = "queux-cgc-mohali-production-key-2026"
 
-def resolve_database_path():
-    """Determine the database path or URL."""
-    return db.resolve_sqlite_path()
+# Production environment & cookie security
+is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("RENDER") is not None
+cookie_secure = bool(os.environ.get("SESSION_COOKIE_SECURE")) or is_production
 
-
-DB_NAME = db.DB_NAME
-_token_generation_lock = threading.Lock()
-
-# ---------- CONFIG ----------
-MINUTES_PER_TOKEN = 2
-
-OPERATOR_USERNAME = os.environ.get("OPERATOR_USERNAME", "operator")
-OPERATOR_PASSWORD = os.environ.get("OPERATOR_PASSWORD", "operator123")
-
-ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "superadmin")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "super123")
-
-DEFAULT_COUNTERS = [
-    {
-        "name": "Examination Cell",
-        "slug": "examination-cell",
-        "location": "Admin Block, 1st Floor",
-        "hours": "09:00 AM - 04:30 PM",
-        "minutes": 3,
-        "description": "Grade cards, hall tickets, transcript verification, and no-dues clearance."
-    },
-    {
-        "name": "Accounts Office",
-        "slug": "accounts-office",
-        "location": "Main Building, Ground Floor",
-        "hours": "09:30 AM - 04:00 PM",
-        "minutes": 2,
-        "description": "Fee payments, scholarship forms, fee receipt duplicates, and refund processing."
-    },
-    {
-        "name": "Library",
-        "slug": "library",
-        "location": "Knowledge Centre, 2nd Floor",
-        "hours": "08:30 AM - 07:00 PM",
-        "minutes": 2,
-        "description": "Book checkouts & returns, membership card activation, and digital research clearance."
-    },
-    {
-        "name": "Cafeteria",
-        "slug": "cafeteria",
-        "location": "Student Activity Centre",
-        "hours": "08:00 AM - 08:00 PM",
-        "minutes": 1,
-        "description": "Meal coupon issuance, prepaid cafeteria card recharges, and mess clearance."
-    },
-    {
-        "name": "Admission Office",
-        "slug": "admission-office",
-        "location": "Welcome Hall, Ground Floor",
-        "hours": "09:00 AM - 05:00 PM",
-        "minutes": 4,
-        "description": "Original certificate verification, migration certificates, and bonafide requests."
-    },
-    {
-        "name": "Stationery Shop",
-        "slug": "stationery-shop",
-        "location": "Campus Arcade, Shop #4",
-        "hours": "08:30 AM - 06:30 PM",
-        "minutes": 1,
-        "description": "Lab record notebooks, assignment sheets, engineering drawing tools, and calculators."
-    },
-    {
-        "name": "Printing & Photocopy",
-        "slug": "printing-photocopy",
-        "location": "Academic Complex, West Wing",
-        "hours": "08:00 AM - 07:00 PM",
-        "minutes": 2,
-        "description": "Thesis printing, spiral binding, color plotters, document scanning, and bulk copying."
-    }
-]
-
-COUNTERS = DEFAULT_COUNTERS
-
-
-# ---------- DATABASE SETUP ----------
-class DB:
-    """Simple context manager for SQLite operations.
-    Commits on success, rolls back on exception, and always closes the connection.
-    Usage:
-        with DB() as cur:
-            cur.execute(...)
-    """
-    def __enter__(self):
-        self.conn = sqlite3.connect(DB_NAME)
-        self.conn.row_factory = sqlite3.Row
-        self.cur = self.conn.cursor()
-        return self.cur
-    def __exit__(self, exc_type, exc, tb):
-        if exc_type:
-            self.conn.rollback()
-        else:
-            self.conn.commit()
-        self.conn.close()
-
-# Backward‑compatible database helper
-def get_db():
-    db.DB_NAME = DB_NAME
-    return db.get_db()
-
-
-def is_postgres():
-    return db.is_postgres()
-
-
-def _column_exists(c, table, column):
-    return db._column_exists(c, table, column)
-
-
-def _add_column_if_missing(c, table, column, coltype):
-    return db._add_column_if_missing(c, table, column, coltype)
-
-
-def init_db():
-    conn = get_db()
-    c = conn.cursor()
-    try:
-        c.execute("PRAGMA journal_mode = WAL")
-    except Exception:
-        pass
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS colleges (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            code TEXT UNIQUE NOT NULL,
-            name TEXT NOT NULL,
-            slug TEXT UNIQUE NOT NULL,
-            domain TEXT,
-            status TEXT DEFAULT 'active',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS counters (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            slug TEXT UNIQUE NOT NULL,
-            current_token INTEGER DEFAULT 0
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS tokens (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            token_number INTEGER NOT NULL,
-            counter_slug TEXT NOT NULL,
-            student_name TEXT,
-            roll_no TEXT,
-            father_name TEXT,
-            phone TEXT,
-            status TEXT DEFAULT 'waiting',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            served_at TIMESTAMP
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            full_name TEXT NOT NULL,
-            email TEXT UNIQUE,
-            phone TEXT,
-            password_hash TEXT,
-            role TEXT NOT NULL DEFAULT 'student',
-            roll_no TEXT,
-            department TEXT,
-            semester TEXT,
-            status TEXT DEFAULT 'active',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_login TIMESTAMP
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS operators (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            employee_id TEXT,
-            assigned_counter_id INTEGER,
-            active INTEGER DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id),
-            FOREIGN KEY (assigned_counter_id) REFERENCES counters(id)
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS counter_services (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            counter_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            description TEXT,
-            estimated_duration INTEGER DEFAULT 5,
-            instructions TEXT,
-            active INTEGER DEFAULT 1,
-            FOREIGN KEY (counter_id) REFERENCES counters(id)
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS service_documents (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            service_id INTEGER NOT NULL,
-            document_name TEXT NOT NULL,
-            mandatory INTEGER DEFAULT 1,
-            description TEXT,
-            FOREIGN KEY (service_id) REFERENCES counter_services(id)
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS queue_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            token_id INTEGER,
-            counter_id INTEGER,
-            operator_id INTEGER,
-            event_type TEXT,
-            metadata TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS audit_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            role TEXT,
-            action TEXT,
-            target_type TEXT,
-            target_id INTEGER,
-            description TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS notifications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            title TEXT,
-            message TEXT,
-            type TEXT,
-            read INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS complaints (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            student_name TEXT NOT NULL,
-            roll_no TEXT,
-            email TEXT,
-            counter_slug TEXT,
-            category TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            message TEXT NOT NULL,
-            status TEXT DEFAULT 'pending',
-            admin_reply TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            resolved_at TIMESTAMP
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS ai_conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            counter_id INTEGER,
-            session_id TEXT,
-            user_message TEXT,
-            ai_response TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    _add_column_if_missing(c, "counters", "description", "TEXT")
-    _add_column_if_missing(c, "counters", "location", "TEXT")
-    _add_column_if_missing(c, "counters", "operating_hours", "TEXT")
-    _add_column_if_missing(c, "counters", "status", "TEXT DEFAULT 'open'")
-    _add_column_if_missing(c, "counters", "estimated_service_minutes", "INTEGER DEFAULT 2")
-    _add_column_if_missing(c, "counters", "max_queue_size", "INTEGER DEFAULT 100")
-    _add_column_if_missing(c, "counters", "priority_enabled", "INTEGER DEFAULT 0")
-    _add_column_if_missing(c, "counters", "ai_enabled", "INTEGER DEFAULT 1")
-    _add_column_if_missing(c, "counters", "college_id", "INTEGER")
-
-    _add_column_if_missing(c, "users", "college_id", "INTEGER")
-    _add_column_if_missing(c, "users", "student_uid", "TEXT")
-
-    _add_column_if_missing(c, "tokens", "user_id", "INTEGER")
-    _add_column_if_missing(c, "tokens", "college_id", "INTEGER")
-    _add_column_if_missing(c, "tokens", "student_uid", "TEXT")
-    _add_column_if_missing(c, "tokens", "priority", "INTEGER DEFAULT 0")
-    _add_column_if_missing(c, "tokens", "service_id", "INTEGER")
-    _add_column_if_missing(c, "tokens", "reason", "TEXT")
-    _add_column_if_missing(c, "tokens", "called_at", "TIMESTAMP")
-    _add_column_if_missing(c, "tokens", "skipped_at", "TIMESTAMP")
-    _add_column_if_missing(c, "tokens", "cancelled_at", "TIMESTAMP")
-    _add_column_if_missing(c, "tokens", "completed_by", "INTEGER")
-    _add_column_if_missing(c, "tokens", "notes", "TEXT")
-
-    # ---------- Seed default operator account from env vars ----------
-    # We store the operator in `users` (role='operator') and link to `operators`.
-    # On startup we upsert so the password stays in sync with the env var.
-    op_email = f"{OPERATOR_USERNAME}@queuex.internal"
-    op_hash = generate_password_hash(OPERATOR_PASSWORD)
-
-    c.execute("SELECT id FROM users WHERE email = ? AND role = 'operator'", (op_email,))
-    op_user = c.fetchone()
-    if op_user:
-        # Keep password hash in sync with current env var value
-        c.execute(
-            "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
-            (op_hash, datetime.now().isoformat(timespec="seconds"), op_user["id"])
-        )
-        op_user_id = op_user["id"]
-    else:
-        c.execute(
-            """INSERT INTO users (full_name, email, password_hash, role, status)
-               VALUES (?, ?, ?, 'operator', 'active')""",
-            ("Default Operator", op_email, op_hash)
-        )
-        op_user_id = c.lastrowid
-
-    # Ensure there is exactly one operators row for this user
-    c.execute("SELECT id FROM operators WHERE user_id = ?", (op_user_id,))
-    if not c.fetchone():
-        c.execute(
-            "INSERT INTO operators (user_id, employee_id, active) VALUES (?, ?, 1)",
-            (op_user_id, OPERATOR_USERNAME)
-        )
-
-    # Seed default superadmin account in users table
-    admin_email = f"{ADMIN_USERNAME}@queuex.internal"
-    admin_hash = generate_password_hash(ADMIN_PASSWORD)
-    c.execute("SELECT id FROM users WHERE email = ? AND role = 'admin'", (admin_email,))
-    adm_user = c.fetchone()
-    if adm_user:
-        c.execute(
-            "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
-            (admin_hash, datetime.now().isoformat(timespec="seconds"), adm_user["id"])
-        )
-    else:
-        c.execute(
-            """INSERT INTO users (full_name, email, password_hash, role, status)
-               VALUES (?, ?, ?, 'admin', 'active')""",
-            ("Super Administrator", admin_email, admin_hash)
-        )
-
-    for cdata in DEFAULT_COUNTERS:
-        c.execute("SELECT id FROM counters WHERE slug = ?", (cdata["slug"],))
-        existing = c.fetchone()
-        if not existing:
-            c.execute(
-                """INSERT INTO counters
-                   (name, slug, current_token, location, description, operating_hours, estimated_service_minutes, status)
-                   VALUES (?, ?, 0, ?, ?, ?, ?, 'open')""",
-                (cdata["name"], cdata["slug"], cdata.get("location", ""), cdata.get("description", ""),
-                 cdata.get("hours", "09:00 AM - 05:00 PM"), cdata.get("minutes", 2))
-            )
-        else:
-            c.execute(
-                """UPDATE counters SET
-                   location = coalesce(location, ?),
-                   description = coalesce(description, ?),
-                   operating_hours = coalesce(operating_hours, ?)
-                   WHERE slug = ?""",
-                (cdata.get("location", ""), cdata.get("description", ""),
-                 cdata.get("hours", "09:00 AM - 05:00 PM"), cdata["slug"])
-            )
-
-    # Seed verified services and document checklists if empty
-    c.execute("SELECT COUNT(*) as cnt FROM counter_services")
-    if c.fetchone()["cnt"] == 0:
-        services_seed = [
-            ("examination-cell", "Hall Ticket Collection", "Collect semester end hall ticket & exam schedule slip", 3, [
-                ("Valid Student ID Card", 1, "Original physical college identity card with visible barcode"),
-                ("Fee Clearance Slip / No-Dues Receipt", 1, "Printout or receipt proving semester dues cleared")
-            ]),
-            ("examination-cell", "Transcripts & Grade Sheets", "Official authenticated transcripts and marksheets", 5, [
-                ("Student ID Card", 1, "Original identity card"),
-                ("Transcript Application Form", 1, "Duly signed by Academic Head"),
-                ("Previous Semester Grade Cards", 0, "Photocopy of previous grade sheets")
-            ]),
-            ("examination-cell", "Degree / Provisional Certificate", "Degree certificate verification and issuance", 5, [
-                ("Provisional Certificate / Admit Card", 1, "Original Provisional certificate"),
-                ("Government Photo ID (Aadhaar/Passport)", 1, "Identity proof")
-            ]),
-            ("accounts-office", "Tuition & Examination Fee Payment", "Pay academic fees or submit bank deposit slips", 3, [
-                ("Student ID Card", 1, "Identity proof"),
-                ("Fee Challan / Payment Voucher", 1, "Generated payment slip from portal")
-            ]),
-            ("accounts-office", "Scholarship & Freeship Verification", "Verification for government & merit scholarships", 4, [
-                ("Income Certificate", 1, "Latest official family income certificate"),
-                ("Caste / Category Certificate", 0, "If applicable for category scholarship"),
-                ("Bank Account Passbook Copy", 1, "Active bank account in student's name")
-            ]),
-            ("accounts-office", "No-Dues Clearance Certificate", "Financial clearance for final year or transfer", 3, [
-                ("Clearance Form", 1, "Standard institute no-dues clearance form"),
-                ("Original Fee Receipts", 0, "Copies of semester fee receipts")
-            ]),
-            ("library", "Book Borrow & Return", "Checkout books, return books, or renew loans", 2, [
-                ("Library Membership Card / Student ID", 1, "Physical barcode card for scanner check-in"),
-                ("Issued Books", 1, "Books to be returned in good condition")
-            ]),
-            ("library", "Library No-Dues Clearance", "Final library clearance certificate", 3, [
-                ("All Borrowed Books Cleared", 1, "No outstanding overdue fines or books"),
-                ("Library Borrower Card", 1, "To be deposited back")
-            ]),
-            ("admission-office", "Original Document Verification", "Verification of academic records for enrolled students", 5, [
-                ("10th & 12th Original Marksheets", 1, "Originals plus 2 self-attested photocopies"),
-                ("Transfer & Migration Certificate", 1, "Original from previous institution"),
-                ("Admission Allotment Letter", 1, "Official college seat allotment letter")
-            ]),
-            ("admission-office", "Bonafide & Character Certificate", "Official student bonafide certificate issuance", 3, [
-                ("Application Form", 1, "Request form stating reason (bank, passport, visa)"),
-                ("Student ID Card", 1, "Original identity card")
-            ]),
-            ("stationery-shop", "Lab Record Manuals & Files", "Purchase university prescribed lab record files", 1, [
-                ("Student ID Card", 1, "For student discount pricing"),
-                ("Course Code Details", 0, "Specific department lab requirements")
-            ]),
-            ("printing-photocopy", "Thesis & Project Spiral Binding", "High-volume printing, plotting, and binding", 3, [
-                ("Softcopy PDF / Document Drive", 1, "Print-ready PDF on USB drive or portal upload"),
-                ("Guide Approval Signature Page", 0, "Required for final thesis submission")
-            ]),
-            ("cafeteria", "Meal Token & Dining Balance Recharge", "Cafeteria coupons, balance reload & mess pass", 1, [
-                ("Cafeteria Card / Student ID", 1, "Campus card for wallet recharge")
-            ])
-        ]
-
-        for counter_slug, s_name, s_desc, s_dur, docs in services_seed:
-            c.execute("SELECT id FROM counters WHERE slug = ?", (counter_slug,))
-            crow = c.fetchone()
-            if crow:
-                cid = crow["id"]
-                c.execute(
-                    "INSERT INTO counter_services (counter_id, name, description, estimated_duration, active) VALUES (?, ?, ?, ?, 1)",
-                    (cid, s_name, s_desc, s_dur)
-                )
-                sid = c.lastrowid
-                for d_name, d_mand, d_desc in docs:
-                    c.execute(
-                        "INSERT INTO service_documents (service_id, document_name, mandatory, description) VALUES (?, ?, ?, ?)",
-                        (sid, d_name, d_mand, d_desc)
-                    )
-
-    # Seed 100 students for Apex Institute of Technology
-    try:
-        seed_100_students(conn)
-    except Exception as e:
-        print(f"Student seeding warning: {e}")
-
-    conn.commit()
-    conn.close()
-
-
-
-
-def get_all_counters(include_deactivated=False):
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        if include_deactivated:
-            c.execute("SELECT * FROM counters WHERE status != 'deleted' ORDER BY id ASC")
-        else:
-            c.execute("SELECT * FROM counters WHERE status != 'deleted' AND status != 'deactivated' ORDER BY id ASC")
-        rows = [dict(r) for r in c.fetchall()]
-        conn.close()
-        if rows:
-            return rows
-    except Exception:
-        pass
-    return DEFAULT_COUNTERS
-
-
-def get_counter_by_slug(slug):
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT * FROM counters WHERE slug = ? AND status != 'deleted'", (slug,))
-        row = c.fetchone()
-        conn.close()
-        if row:
-            return dict(row)
-    except Exception:
-        pass
-    for cdata in DEFAULT_COUNTERS:
-        if cdata["slug"] == slug:
-            return cdata
-    return None
-
-
-def get_counter_name(slug):
-    cdata = get_counter_by_slug(slug)
-    return cdata["name"] if cdata else slug.replace("-", " ").title()
-
-
-def is_valid_counter(slug):
-    return get_counter_by_slug(slug) is not None
-
-
-def create_notification(user_id, title, message, notif_type="info"):
-    if not user_id:
-        return
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute(
-            "INSERT INTO notifications (user_id, title, message, type, read) VALUES (?, ?, ?, ?, 0)",
-            (user_id, title, message, notif_type)
-        )
-        conn.commit()
-        conn.close()
-        socketio.emit("notification_new", {"user_id": user_id, "title": title, "message": message}, room=f"user_{user_id}")
-    except Exception:
-        pass
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=cookie_secure,
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(days=3)
+)
 
 
 @app.after_request
-def add_security_headers(response):
+def set_security_headers(response):
+    """Enforce industry standard security headers across all responses."""
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://cdn.jsdelivr.net; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com data:; "
-        "img-src 'self' data: https:; "
-        "connect-src 'self' ws: wss:;"
-    )
     return response
 
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+APP_START_TIME = datetime.datetime.now(datetime.timezone.utc)
 
-@app.errorhandler(400)
-def handle_bad_request(e):
-    if request.is_json or request.path.startswith("/api/"):
-        desc = getattr(e, "description", "Bad Request")
-        return jsonify({"error": desc if isinstance(desc, str) else "Bad Request"}), 400
-    return render_template("error.html", code=400, title="Bad Request", message="The request could not be processed due to invalid syntax or parameters."), 400
+# Re-entrant thread lock for critical queue state mutations in multi-threaded Gunicorn
+QUEUE_LOCK = threading.RLock()
+
+# -------------------------------------------------------------
+# DATABASE INITIALIZATION
+# -------------------------------------------------------------
+
+def init_db():
+    with db.get_db() as conn:
+        c = conn.cursor()
+
+        # Users table (students, operators, admin)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                full_name TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('student', 'operator', 'admin')),
+                identifier TEXT UNIQUE NOT NULL, -- Student Roll No / Operator Employee ID
+                department TEXT DEFAULT 'CSE',
+                course TEXT DEFAULT 'B.Tech',
+                semester INTEGER DEFAULT 6,
+                phone TEXT DEFAULT '',
+                is_active INTEGER DEFAULT 1,     -- 1=Active, 0=Deactivated
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Departments (Library, Accounts, Registrar, CRC, Examination, Hostel)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS departments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                building_block TEXT DEFAULT 'Block 1',
+                is_active INTEGER DEFAULT 1,     -- 1=Active, 0=Deactivated
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Service Counters
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS counters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                department_id INTEGER NOT NULL,
+                name TEXT NOT NULL,          -- e.g. "Fee Deposit Window 1", "Degree Dispatch"
+                code TEXT UNIQUE NOT NULL,   -- e.g. "ACCOUNTS-W1", "REG-W2"
+                is_active INTEGER DEFAULT 1, -- 1=Open, 0=Closed
+                is_paused INTEGER DEFAULT 0, -- 1=Queue paused, 0=Normal
+                assigned_operator_id INTEGER DEFAULT NULL,
+                avg_service_time_mins INTEGER DEFAULT 8,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Queue Tokens
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_number INTEGER NOT NULL, -- Daily incremental per counter (1, 2, 3...)
+                counter_id INTEGER NOT NULL,
+                department_id INTEGER NOT NULL,
+                student_id INTEGER NOT NULL,
+                student_name TEXT NOT NULL,
+                student_roll TEXT NOT NULL,
+                student_phone TEXT DEFAULT '',
+                service_reason TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'waiting' CHECK(status IN ('waiting', 'serving', 'served', 'skipped', 'cancelled')),
+                token_salt TEXT NOT NULL,      -- Secret for secure QR verification
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                called_at TIMESTAMP DEFAULT NULL,
+                completed_at TIMESTAMP DEFAULT NULL
+            )
+        """)
+
+        # Student Feedback for completed services
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_id INTEGER UNIQUE NOT NULL,
+                student_id INTEGER NOT NULL,
+                counter_id INTEGER NOT NULL,
+                rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+                comments TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # System Notifications
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                is_read INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # System Audit Log
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action TEXT NOT NULL,
+                user_id INTEGER DEFAULT NULL,
+                user_role TEXT DEFAULT '',
+                details TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Performance & Concurrency Safe Indexes
+        c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_counter_status ON tokens (counter_id, status);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_student_status ON tokens (student_id, status);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_created ON tokens (created_at);")
+
+        conn.commit()
+
+        # Seed initial departments for CGC University Mohali
+        c.execute("SELECT COUNT(*) as cnt FROM departments")
+        if c.fetchone()["cnt"] == 0:
+            cgc_departments = [
+                ("ACCOUNTS", "Fee & Accounts Section", "Tuition, examination, and hostel fee settlement", "Block 1 Ground Floor"),
+                ("REGISTRAR", "Registrar & Student Documentation", "Degree verification, bonafide & migration certificates", "Admin Block Room 102"),
+                ("LIBRARY", "Central University Library", "Book issue/return, library cards, and clearance", "Central Library Block"),
+                ("EXAMINATION", "Examination & Records Cell", "Admit card clearance, marksheets, and re-evaluation", "Block 3 1st Floor"),
+                ("CRC", "Corporate Resource Center (Placements)", "Placement verification, NOC, and internship letters", "Block 5 3rd Floor"),
+                ("HOSTEL", "Hostel & Transport Administration", "Room allotment, gate passes, and bus passes", "Campus Support Office"),
+            ]
+            for code, name, desc, bldg in cgc_departments:
+                c.execute("""
+                    INSERT INTO departments (code, name, description, building_block)
+                    VALUES (?, ?, ?, ?)
+                """, (code, name, desc, bldg))
+
+        # Seed initial counters
+        c.execute("SELECT COUNT(*) as cnt FROM counters")
+        if c.fetchone()["cnt"] == 0:
+            initial_counters = [
+                (1, "Fee Deposit Counter 1", "ACCOUNTS-W1", 8),
+                (1, "Scholarship & Concession Desk", "ACCOUNTS-W2", 12),
+                (2, "Bonafide & Character Certificate Window", "REG-W1", 5),
+                (2, "Degree & Transcript Dispatch Desk", "REG-W2", 7),
+                (3, "Book Issue & Circulation Desk", "LIB-W1", 4),
+                (4, "Admit Card Clearance Desk", "EXAM-W1", 6),
+                (5, "Placement NOC & Drive Verification Desk", "CRC-W1", 10),
+            ]
+            for dep_id, name, code, avg_m in initial_counters:
+                c.execute("""
+                    INSERT INTO counters (department_id, name, code, avg_service_time_mins)
+                    VALUES (?, ?, ?, ?)
+                """, (dep_id, name, code, avg_m))
+
+        # Seed Default Admin
+        c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'admin'")
+        if c.fetchone()["cnt"] == 0:
+            c.execute("""
+                INSERT INTO users (email, password_hash, full_name, role, identifier, phone)
+                VALUES (?, ?, ?, 'admin', 'ADM001', '0172-3984200')
+            """, (
+                "admin@cgc.edu.in",
+                generate_password_hash("Admin@QueueX2026"),
+                "CGC Central Queue Administrator"
+            ))
+
+        # Seed Default Operator (assigned to Counter 1 - Fee Deposit)
+        c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'operator'")
+        if c.fetchone()["cnt"] == 0:
+            c.execute("""
+                INSERT INTO users (email, password_hash, full_name, role, identifier, phone)
+                VALUES (?, ?, ?, 'operator', 'OP101', '9876543210')
+            """, (
+                "operator@cgc.edu.in",
+                generate_password_hash("Operator@QueueX2026"),
+                "Accounts Counter Officer"
+            ))
+            c.execute("UPDATE counters SET assigned_operator_id = (SELECT id FROM users WHERE email = 'operator@cgc.edu.in') WHERE code = 'ACCOUNTS-W1'")
+
+        # Seed Demo Student
+        c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'student'")
+        if c.fetchone()["cnt"] == 0:
+            c.execute("""
+                INSERT INTO users (email, password_hash, full_name, role, identifier, phone, department, course, semester)
+                VALUES (?, ?, ?, 'student', '2201045', '9812345678', 'CSE', 'B.Tech', 6)
+            """, (
+                "student@cgc.edu.in",
+                generate_password_hash("Student@QueueX2026"),
+                "Aarav Sharma"
+            ))
+
+        conn.commit()
 
 
-@app.errorhandler(401)
-def handle_unauthorized(e):
-    if request.is_json or request.path.startswith("/api/"):
-        return jsonify({"error": "unauthorized"}), 401
-    return redirect(url_for("student_login"))
+# -------------------------------------------------------------
+# ROLE-BASED ACCESS CONTROL & CONTEXT
+# -------------------------------------------------------------
+
+def login_required(role=None):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if "user_id" not in session:
+                flash("Please log in to continue.", "warning")
+                return redirect(url_for("login"))
+            if role and session.get("user_role") != role:
+                flash("Unauthorized access for your account.", "danger")
+                user_role = session.get("user_role")
+                if user_role == "student":
+                    return redirect(url_for("student_portal"))
+                elif user_role == "operator":
+                    return redirect(url_for("operator_portal"))
+                elif user_role == "admin":
+                    return redirect(url_for("admin_portal"))
+                return redirect(url_for("login"))
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
 
 
-@app.errorhandler(403)
-def handle_forbidden(e):
-    if request.is_json or request.path.startswith("/api/"):
-        desc = getattr(e, "description", "Forbidden")
-        return jsonify({"error": desc if isinstance(desc, str) else "Forbidden"}), 403
-    return render_template("error.html", code=403, title="Access Denied", message="You do not have permission to access this resource."), 403
+@app.context_processor
+def inject_common_context():
+    unread_notifs = 0
+    if "user_id" in session:
+        try:
+            with db.get_db() as conn:
+                c = conn.cursor()
+                c.execute("SELECT COUNT(*) as cnt FROM notifications WHERE user_id = ? AND is_read = 0", (session["user_id"],))
+                unread_notifs = c.fetchone()["cnt"]
+        except Exception:
+            unread_notifs = 0
+
+    return {
+        "current_user": session.get("user_name"),
+        "current_role": session.get("user_role"),
+        "current_id": session.get("user_id"),
+        "current_identifier": session.get("user_identifier"),
+        "unread_notifications": unread_notifs,
+        "now": datetime.datetime.now()
+    }
 
 
-@app.errorhandler(404)
-def handle_not_found(e):
-    if request.is_json or request.path.startswith("/api/"):
-        return jsonify({"error": "Resource not found"}), 404
-    return render_template("error.html", code=404, title="Page Not Found", message="The requested terminal or record could not be found."), 404
+def generate_qr_base64(data_str):
+    """Generate high-contrast QR code returned as inline base64 image data."""
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=6,
+        border=2,
+    )
+    qr.add_data(data_str)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="#0b1f3a", back_color="#ffffff")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
-@app.errorhandler(500)
-def handle_server_error(e):
-    if request.is_json or request.path.startswith("/api/"):
-        return jsonify({"error": "Internal server error"}), 500
-    return render_template("error.html", code=500, title="Server Error", message="An unexpected server error occurred. Please try again shortly."), 500
+def broadcast_queue_update(counter_id, event_type="queue_updated", payload=None):
+    """Notify WebSocket clients and counter rooms of queue updates."""
+    try:
+        data = payload or {}
+        data["counter_id"] = counter_id
+        data["event_type"] = event_type
+        data["timestamp"] = datetime.datetime.now().isoformat()
+        socketio.emit("queue_update", data, room=f"counter_{counter_id}")
+        socketio.emit("public_counters_update", data)
+    except Exception as _e:
+        pass
 
+
+@socketio.on("join_counter")
+def on_join_counter(data):
+    counter_id = data.get("counter_id")
+    if counter_id:
+        join_room(f"counter_{counter_id}")
+        emit("joined_counter", {"counter_id": counter_id, "status": "connected"})
+
+
+@socketio.on("leave_counter")
+def on_leave_counter(data):
+    counter_id = data.get("counter_id")
+    if counter_id:
+        leave_room(f"counter_{counter_id}")
+
+
+# -------------------------------------------------------------
+# HEALTH CHECK & SYSTEM STATUS
+# -------------------------------------------------------------
 
 @app.route("/health")
 @app.route("/api/health")
 def health_check():
-    """Production health-check endpoint for Railway container monitoring."""
     try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT 1")
-        conn.close()
-        db_status = "connected"
-    except Exception as e:
-        return jsonify({
-            "status": "unhealthy",
-            "database": "disconnected",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }), 503
-
-    uptime_sec = round((datetime.now() - APP_START_TIME).total_seconds())
-
-    return jsonify({
-        "status": "healthy",
-        "database": db_status,
-        "environment": os.environ.get("RAILWAY_ENVIRONMENT", "production" if os.environ.get("FLASK_ENV") == "production" else "development"),
-        "timestamp": datetime.now().isoformat(),
-        "uptime_seconds": uptime_sec,
-        "database_path": DB_NAME
-    }), 200
-
-
-def parse_token(value):
-    try:
-        token = int(value)
-    except (TypeError, ValueError):
-        return None
-    return token if token > 0 else None
-
-
-def current_student():
-    if session.get("role") != "student" or not session.get("user_id"):
-        return None
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE id = ? AND role = 'student'", (session["user_id"],))
-    row = c.fetchone()
-    conn.close()
-    return row
-
-
-def is_operator():
-    """Return True only when session holds a valid, active operator."""
-    if session.get("role") != "operator" or not session.get("operator_id"):
-        return False
-    conn = get_db()
-    c = conn.cursor()
-    c.execute(
-        """SELECT op.id FROM operators op
-           JOIN users u ON u.id = op.user_id
-           WHERE op.id = ? AND op.active = 1 AND u.status = 'active' AND u.role = 'operator'""",
-        (session["operator_id"],)
-    )
-    row = c.fetchone()
-    conn.close()
-    return row is not None
-
-
-def is_admin():
-    """Return True only when session role is 'admin'."""
-    return session.get("role") == "admin"
-
-
-# ---------- CSRF PROTECTION ----------
-# Lightweight HMAC-based CSRF token — no external library needed.
-# Token = HMAC-SHA256(secret_key, session_csrf_seed) encoded as hex.
-# The seed is generated once per session and stored server-side in the session.
-
-def _get_csrf_seed():
-    """Return (or create) the per-session random seed."""
-    if "csrf_seed" not in session:
-        session["csrf_seed"] = secrets.token_hex(32)
-    return session["csrf_seed"]
-
-
-def generate_csrf_token():
-    """Return the CSRF token string for the current session."""
-    seed = _get_csrf_seed()
-    return hmac.new(
-        app.secret_key.encode() if isinstance(app.secret_key, str) else app.secret_key,
-        seed.encode(),
-        hashlib.sha256
-    ).hexdigest()
-
-
-def validate_csrf():
-    """
-    Validate the CSRF token submitted in a POST/PUT/PATCH/DELETE request.
-    Raises 403 if the token is absent or invalid.
-    Socket.IO POSTs, JSON requests with X-CSRFToken, and testing mode are handled appropriately.
-    """
-    if request.path.startswith("/socket.io"):
-        return
-    if app.config.get("TESTING") and not app.config.get("CSRF_ENABLED", False):
-        return
-    if request.method in ("GET", "HEAD", "OPTIONS", "TRACE"):
-        return
-
-    token = (
-        request.form.get("csrf_token")
-        or request.headers.get("X-CSRFToken")
-        or request.headers.get("X-CSRF-Token")
-    )
-    if not token and request.is_json:
-        payload = request.get_json(silent=True)
-        if isinstance(payload, dict):
-            token = payload.get("csrf_token")
-
-    expected = generate_csrf_token()
-    if not token or not hmac.compare_digest(str(token), str(expected)):
-        abort(403)
-
-
-@app.before_request
-def csrf_protect():
-    validate_csrf()
-
-
-# Expose csrf_token() inside every Jinja template automatically
-@app.context_processor
-def inject_csrf():
-    return {"csrf_token": generate_csrf_token}
-
-
-# ---------- INPUT VALIDATION HELPERS ----------
-
-_PHONE_RE = re.compile(r"^\d{10}$")
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_SLUG_RE  = re.compile(r"^[a-z0-9\-]{1,64}$")
-
-
-def sanitize_text(value, max_len=200):
-    """Strip leading/trailing whitespace and truncate to max_len."""
-    if not isinstance(value, str):
-        return ""
-    return value.strip()[:max_len]
-
-
-def valid_phone(value):
-    return bool(_PHONE_RE.match(value))
-
-
-def valid_email(value):
-    return bool(_EMAIL_RE.match(value)) and len(value) <= 254
-
-
-def valid_slug(value):
-    return bool(_SLUG_RE.match(value)) if value else False
-
-
-def get_counter_status(slug):
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT status FROM counters WHERE slug = ?", (slug,))
-    row = c.fetchone()
-    conn.close()
-    return row["status"] if row and row["status"] else "open"
-
-
-# ---------- REALTIME HELPER ----------
-def broadcast_queue_update(slug):
-    conn = get_db()
-    c = conn.cursor()
-
-    c.execute("SELECT current_token, status FROM counters WHERE slug = ?", (slug,))
-    row = c.fetchone()
-    current_token = row["current_token"] if row else 0
-    counter_status = row["status"] if row and row["status"] else "open"
-
-    c.execute(
-        """SELECT token_number, student_name, roll_no FROM tokens
-           WHERE counter_slug = ? AND token_number > ? AND status = 'waiting'
-           ORDER BY token_number ASC""",
-        (slug, current_token)
-    )
-    waiting = [dict(r) for r in c.fetchall()]
-    conn.close()
-
-    socketio.emit("queue_update", {
-        "counter_slug": slug,
-        "current_token": current_token,
-        "waiting_count": len(waiting),
-        "queue": waiting,
-        "counter_status": counter_status
-    }, room=slug)
-
-    socketio.emit("admin_refresh", {"counter_slug": slug}, room="admin_global")
-
-
-# ---------- STUDENT AUTH ROUTES ----------
-
-@app.route("/register", methods=["GET", "POST"])
-def register():
-    error = None
-    if request.method == "POST":
-        full_name = request.form.get("full_name", "").strip()
-        email = request.form.get("email", "").strip().lower()
-        phone = request.form.get("phone", "").strip()
-        roll_no = request.form.get("roll_no", "").strip()
-        department = request.form.get("department", "").strip()
-        semester = request.form.get("semester", "").strip()
-        password = request.form.get("password", "")
-        confirm_password = request.form.get("confirm_password", "")
-
-        # Clean digits from phone
-        clean_phone = re.sub(r"\D", "", phone) if phone else ""
-
-        if not full_name:
-            error = "Please provide your full name."
-        elif not email and not clean_phone:
-            error = "Please provide either an email address or mobile number."
-        elif email and ("@" not in email or "." not in email):
-            error = "Please enter a valid email address."
-        elif clean_phone and len(clean_phone) != 10:
-            error = "Mobile number must be exactly 10 digits."
-        elif not password or not confirm_password:
-            error = "Please enter and confirm your password."
-        elif password != confirm_password:
-            error = "Passwords do not match."
-        elif len(password) < 6:
-            error = "Password must be at least 6 characters."
-        else:
-            conn = get_db()
+        with db.get_db() as conn:
             c = conn.cursor()
-
-            # Check email uniqueness if email provided
-            if email:
-                c.execute("SELECT id FROM users WHERE LOWER(email) = ?", (email,))
-                if c.fetchone():
-                    conn.close()
-                    return render_template("register.html", error="An account with this email already exists.")
-
-            # Check phone uniqueness if phone provided
-            if clean_phone:
-                c.execute("SELECT id FROM users WHERE phone = ?", (clean_phone,))
-                if c.fetchone():
-                    conn.close()
-                    return render_template("register.html", error="An account with this mobile number already exists.")
-
-            # Check roll_no uniqueness if roll_no provided
-            if roll_no:
-                c.execute("SELECT id FROM users WHERE LOWER(roll_no) = ? AND role = 'student'", (roll_no.lower(),))
-                if c.fetchone():
-                    conn.close()
-                    return render_template("register.html", error="An account with this roll number already exists.")
-
-            db_email = email if email else None
-            db_phone = clean_phone if clean_phone else None
-
-            c.execute(
-                """INSERT INTO users
-                   (full_name, email, phone, password_hash, role, roll_no, department, semester, status)
-                   VALUES (?, ?, ?, ?, 'student', ?, ?, ?, 'active')""",
-                (full_name, db_email, db_phone, generate_password_hash(password), roll_no, department, semester)
-            )
-            conn.commit()
-            new_id = c.lastrowid
-            conn.close()
-
-            session["user_id"] = new_id
-            session["role"] = "student"
-            return redirect(url_for("student"))
-
-    return render_template("register.html", error=error)
+            c.execute("SELECT 1")
+            c.fetchone()
+        uptime = (datetime.datetime.now(datetime.timezone.utc) - APP_START_TIME).total_seconds()
+        return jsonify({
+            "status": "healthy",
+            "system": "QueueX Smart Virtual Queue System",
+            "campus": "CGC University, Mohali, Punjab",
+            "database": "connected",
+            "engine": "postgresql" if db.is_postgres() else "sqlite",
+            "uptime_seconds": round(uptime, 2)
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "unhealthy", "error": str(e)}), 503
 
 
-@app.route("/login", methods=["GET", "POST"])
-def student_login():
-    error = None
-    if request.method == "POST":
-        identifier = request.form.get("identifier", "").strip()
-        password = request.form.get("password", "")
-
-        clean_phone = re.sub(r"\D", "", identifier)
-        clean_uid = identifier.upper()
-
-        conn = get_db()
-        c = conn.cursor()
-        c.execute(
-            """SELECT * FROM users 
-               WHERE role = 'student' 
-                 AND (
-                     LOWER(email) = ? 
-                     OR (phone = ? AND ? != '') 
-                     OR LOWER(roll_no) = ?
-                     OR UPPER(student_uid) = ?
-                 )""",
-            (identifier.lower(), clean_phone, clean_phone, identifier.lower(), clean_uid)
-        )
-        row = c.fetchone()
-
-        if row and row["password_hash"] and check_password_hash(row["password_hash"], password):
-            if row["status"] != "active":
-                error = "This account is deactivated. Contact admin."
-            else:
-                c.execute("UPDATE users SET last_login = ? WHERE id = ?",
-                          (datetime.now().isoformat(timespec="seconds"), row["id"]))
-                conn.commit()
-                session.clear()
-                session["user_id"] = row["id"]
-                session["role"] = "student"
-                conn.close()
-                return redirect(url_for("student"))
-        else:
-            error = "Invalid email, mobile number, roll number, or password."
-        conn.close()
-
-    return render_template("student_login.html", error=error)
-
-
-@app.route("/student/logout")
-def student_logout():
-    # Clear all student session data unconditionally
-    session.pop("user_id", None)
-    session.pop("role", None)
-    return redirect(url_for("index"))
-
-
-# ---------- STUDENT ROUTES ----------
+# -------------------------------------------------------------
+# PUBLIC & AUTHENTICATION ENDPOINTS
+# -------------------------------------------------------------
 
 @app.route("/")
 def index():
-    return render_template("index.html", counters=COUNTERS)
-
-
-@app.route("/sw.js")
-def service_worker():
-    return send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript")
-
-
-@app.route("/offline")
-def offline():
-    return render_template("offline.html")
-
-
-@app.route("/student")
-def student():
-    student_user = current_student()
-    return render_template("student.html", counters=COUNTERS, student_user=student_user)
-
-
-@app.route("/get-token", methods=["POST"])
-def get_token():
-    slug = request.form.get("counter")
-    if not is_valid_counter(slug):
-        return jsonify({"error": "invalid counter"}), 400
-
-    if get_counter_status(slug) != "open":
-        return jsonify({"error": "This counter is currently not accepting tokens"}), 400
-
-    student_user = current_student()
-
-    if student_user:
-        student_name = student_user["full_name"]
-        roll_no = student_user["roll_no"] or ""
-        father_name = request.form.get("father_name", "").strip() or "Parent / Guardian"
-        phone = student_user["phone"] or ""
-        user_uid = student_user["student_uid"] if "student_uid" in student_user.keys() else None
-        user_cid = student_user["college_id"] if "college_id" in student_user.keys() and student_user["college_id"] else 1
-        user_id = student_user["id"]
-    else:
-        student_name = request.form.get("student_name", "").strip()
-        roll_no = request.form.get("roll_no", "").strip()
-        father_name = request.form.get("father_name", "").strip() or "Parent / Guardian"
-        phone = request.form.get("phone", "").strip()
-
-        if not student_name or not roll_no:
-            return jsonify({"error": "student name and roll number are required"}), 400
-
-        clean_phone = re.sub(r"\D", "", phone) if phone else ""
-        if phone and len(clean_phone) != 10:
-            return jsonify({"error": "phone must be 10 digits"}), 400
-        phone = clean_phone
-
-        # Validate that student is enrolled in the college database
-        conn_check = get_db()
-        c_check = conn_check.cursor()
-        c_check.execute(
-            """SELECT * FROM users WHERE role = 'student' AND (
-                LOWER(roll_no) = ? OR UPPER(student_uid) = ? OR (phone = ? AND ? != '')
-            )""",
-            (roll_no.lower(), roll_no.upper(), clean_phone, clean_phone)
-        )
-        enrolled = c_check.fetchone()
-        conn_check.close()
-
-        if not enrolled and not app.config.get("TESTING"):
-            return jsonify({
-                "error": f"Student with Roll No / ID '{roll_no}' is not enrolled in the college database. Only enrolled students are permitted to take tokens. Please contact Admin."
-            }), 403
-
-        if enrolled:
-            student_name = enrolled["full_name"]
-            roll_no = enrolled["roll_no"] or roll_no
-            phone = enrolled["phone"] or phone
-            user_uid = enrolled["student_uid"]
-            user_cid = enrolled["college_id"] or 1
-            user_id = enrolled["id"]
-        else:
-            user_uid = None
-            user_cid = 1
-            user_id = None
-
-    student_name = sanitize_text(student_name, 100)
-    roll_no = sanitize_text(roll_no, 40)
-    father_name = sanitize_text(father_name, 100)
-
-    with _token_generation_lock:
-        conn = get_db()
-        # Serialise token allocation with process lock & exclusive/serializable transaction
-        if not is_postgres():
-            conn.isolation_level = None          # manual transaction control
-            c = conn.cursor()
-            c.execute("BEGIN EXCLUSIVE")
-        else:
-            c = conn.cursor()
-
-        try:
-            c.execute(
-                "SELECT MAX(token_number) as max_token FROM tokens WHERE counter_slug = ?",
-                (slug,)
-            )
-            row = c.fetchone()
-            new_token = (row["max_token"] or 0) + 1
-
-            c.execute(
-                """INSERT INTO tokens
-                   (token_number, counter_slug, student_name, roll_no, father_name, phone, status, user_id, student_uid, college_id)
-                   VALUES (?, ?, ?, ?, ?, ?, 'waiting', ?, ?, ?)""",
-                (new_token, slug, student_name, roll_no, father_name, phone,
-                 user_id, user_uid, user_cid)
-            )
-            new_token_id = c.lastrowid
-            if not is_postgres():
-                c.execute("COMMIT")
-            else:
-                conn.commit()
-        except Exception:
-            if not is_postgres():
-                c.execute("ROLLBACK")
-            else:
-                conn.rollback()
-            conn.close()
-            return jsonify({"error": "Could not allocate token, please try again"}), 500
-        conn.close()
-
-    # Track issued token in student session for authorization and history
-    issued = session.get("issued_tokens", [])
-    if not isinstance(issued, list):
-        issued = []
-    issued.append({
-        "id": new_token_id,
-        "counter": slug,
-        "token": new_token,
-        "created_at": datetime.now().isoformat(timespec="seconds")
-    })
-    session["issued_tokens"] = issued[-25:]
-    session.modified = True
-
-    broadcast_queue_update(slug)
-
-    return redirect(url_for("status", counter=slug, token=new_token))
-
-
-def check_token_authorization(token_row):
-    """Check if the current session or user is authorized to manage this token."""
-    if not token_row:
-        return False
-    if is_admin() or is_operator():
-        return True
-
-    token_keys = token_row.keys() if hasattr(token_row, "keys") else []
-    token_user_id = token_row["user_id"] if "user_id" in token_keys else None
-    token_slug = token_row["counter_slug"] if "counter_slug" in token_keys else None
-    token_num = token_row["token_number"] if "token_number" in token_keys else None
-    token_id = token_row["id"] if "id" in token_keys else None
-
-    student_user = current_student()
-    if student_user and token_user_id and token_user_id == student_user["id"]:
-        return True
-
-    issued = session.get("issued_tokens", [])
-    if isinstance(issued, list):
-        for item in issued:
-            if isinstance(item, dict):
-                if token_slug and token_num and item.get("counter") == token_slug and item.get("token") == token_num:
-                    return True
-                if token_id and item.get("id") == token_id:
-                    return True
-    return False
-
-
-@app.route("/cancel-token", methods=["POST"])
-@app.route("/api/student/cancel-token", methods=["POST"])
-def cancel_token():
-    payload = request.get_json(silent=True) or request.form
-    slug = payload.get("counter")
-    token = parse_token(payload.get("token"))
-    token_id = payload.get("token_id")
-
-    conn = get_db()
-    c = conn.cursor()
-
-    if token_id:
-        c.execute("SELECT * FROM tokens WHERE id = ?", (token_id,))
-    elif slug and token is not None:
-        c.execute("SELECT * FROM tokens WHERE counter_slug = ? AND token_number = ?", (slug, token))
-    else:
-        conn.close()
-        return jsonify({"error": "Missing counter and token parameters"}), 400
-
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        return jsonify({"error": "Token not found"}), 404
-
-    # 1. Authorization check: only authorized student/session or staff
-    if not check_token_authorization(row):
-        conn.close()
-        return jsonify({"error": "Unauthorized: You can only cancel tokens issued from your account or session."}), 403
-
-    # 2. Status check: only waiting tokens can be cancelled
-    if row["status"] != "waiting":
-        conn.close()
-        return jsonify({
-            "error": f"Cannot cancel token #{row['token_number']}. It is already {row['status']}."
-        }), 400
-
-    now_iso = datetime.now().isoformat(timespec="seconds")
-    c.execute(
-        "UPDATE tokens SET status = 'cancelled', cancelled_at = ? WHERE id = ?",
-        (now_iso, row["id"])
-    )
-    conn.commit()
-    conn.close()
-
-    broadcast_queue_update(row["counter_slug"])
-
-    if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest" or request.path.startswith("/api/"):
-        return jsonify({
-            "success": True,
-            "message": f"Token #{row['token_number']} has been successfully cancelled.",
-            "status": "cancelled",
-            "token": row["token_number"],
-            "counter": row["counter_slug"]
-        })
-
-    return redirect(url_for("status", counter=row["counter_slug"], token=row["token_number"]))
-
-
-@app.route("/my-tokens")
-def my_tokens():
-    student_user = current_student()
-    if not student_user:
-        return redirect(url_for("student_login"))
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute(
-        "SELECT * FROM tokens WHERE user_id = ? ORDER BY created_at DESC",
-        (student_user["id"],)
-    )
-    rows = c.fetchall()
-    conn.close()
-
-    tokens = []
-    for r in rows:
-        t = dict(r)
-        t["counter_name"] = get_counter_name(t["counter_slug"])
-        tokens.append(t)
-
-    return render_template("my_tokens.html", tokens=tokens, student_user=student_user)
-
-
-@app.route("/status")
-def status():
-    slug = request.args.get("counter")
-    token = parse_token(request.args.get("token"))
-
-    if not is_valid_counter(slug) or token is None:
-        return redirect(url_for("student"))
-
-    student_user = current_student()
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute(
-        "SELECT * FROM tokens WHERE counter_slug = ? AND token_number = ?",
-        (slug, token)
-    )
-    row = c.fetchone()
-    conn.close()
-
-    is_owner = check_token_authorization(row) if row else False
-    token_status = row["status"] if row else "waiting"
-
-    return render_template(
-        "status.html",
-        counter_slug=slug,
-        counter_name=get_counter_name(slug),
-        token=token,
-        token_id=row["id"] if row else None,
-        token_status=token_status,
-        is_owner=is_owner,
-        student_name=row["student_name"] if (row and (is_owner or is_operator() or is_admin())) else (row["student_name"] if row else ""),
-        roll_no=row["roll_no"] if (row and (is_owner or is_operator() or is_admin())) else (row["roll_no"] if row else ""),
-        student_user=student_user
-    )
-
-
-@app.route("/api/status")
-def api_status():
-    slug = request.args.get("counter")
-    token = parse_token(request.args.get("token"))
-
-    if not is_valid_counter(slug) or token is None:
-        return jsonify({"error": "invalid counter or token"}), 400
-
-    conn = get_db()
-    c = conn.cursor()
-
-    # Fetch the real status of this specific token row
-    c.execute(
-        "SELECT * FROM tokens WHERE counter_slug = ? AND token_number = ?",
-        (slug, token)
-    )
-    token_row = c.fetchone()
-
-    c.execute("SELECT current_token, estimated_service_minutes FROM counters WHERE slug = ?", (slug,))
-    counter_row = c.fetchone()
-    current_token = counter_row["current_token"] if counter_row else 0
-    service_minutes = counter_row["estimated_service_minutes"] if counter_row and counter_row["estimated_service_minutes"] else MINUTES_PER_TOKEN
-    conn.close()
-
-    # Determine student-facing status from the token's actual DB status
-    if token_row is None:
-        # Token doesn't exist at all
-        student_status = "waiting"
-    elif token_row["status"] == "served":
-        student_status = "served"
-    elif token_row["status"] == "skipped":
-        student_status = "skipped"
-    elif token_row["status"] == "cancelled":
-        student_status = "cancelled"
-    else:
-        student_status = "waiting"
-
-    if student_status in ("served", "skipped", "cancelled"):
-        people_ahead = 0
-        estimated_wait = 0
-    else:
-        people_ahead = max(token - current_token - 1, 0)
-        estimated_wait = people_ahead * service_minutes
-
-    is_owner = check_token_authorization(token_row) if token_row else False
-
-    return jsonify({
-        "your_token": token,
-        "currently_serving": current_token,
-        "people_ahead": people_ahead,
-        "estimated_wait": estimated_wait,
-        "status": student_status,
-        "is_owner": is_owner,
-        "counter_slug": slug
-    })
-
-
-@app.route("/feedback", methods=["GET", "POST"])
-def feedback():
-    student_user = current_student()
-    error = None
-    success = None
-
-    if request.method == "POST":
-        full_name = request.form.get("student_name", "").strip()
-        roll_no = request.form.get("roll_no", "").strip()
-        email = request.form.get("email", "").strip()
-        counter_slug = request.form.get("counter", "").strip() or None
-        category = request.form.get("category", "").strip()
-        subject = request.form.get("subject", "").strip()
-        message = request.form.get("message", "").strip()
-
-        if student_user:
-            full_name = full_name or student_user["full_name"]
-            roll_no = roll_no or student_user["roll_no"] or ""
-            email = email or student_user["email"] or ""
-            user_id = student_user["id"]
-        else:
-            user_id = None
-
-        if not full_name:
-            error = "Please provide your name."
-        elif not category:
-            error = "Please select a feedback category."
-        elif not subject:
-            error = "Please provide a subject."
-        elif not message or len(message) < 5:
-            error = "Please provide a detailed message (minimum 5 characters)."
-        else:
-            conn = get_db()
-            c = conn.cursor()
-            c.execute(
-                """INSERT INTO complaints
-                   (user_id, student_name, roll_no, email, counter_slug, category, subject, message, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
-                (user_id, sanitize_text(full_name), sanitize_text(roll_no, 50),
-                 sanitize_text(email, 120), counter_slug,
-                 sanitize_text(category, 60), sanitize_text(subject, 150),
-                 sanitize_text(message, 1000))
-            )
-            conn.commit()
-            conn.close()
-            success = "Your feedback has been submitted successfully. The campus administration will review it promptly."
-
-    recent_complaints = []
-    if student_user:
-        conn = get_db()
+    if "user_id" in session:
+        role = session.get("user_role")
+        if role == "student":
+            return redirect(url_for("student_portal"))
+        elif role == "operator":
+            return redirect(url_for("operator_portal"))
+        elif role == "admin":
+            return redirect(url_for("admin_portal"))
+
+    with db.get_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT * FROM complaints WHERE user_id = ? ORDER BY created_at DESC LIMIT 5", (student_user["id"],))
-        recent_complaints = [dict(r) for r in c.fetchall()]
-        conn.close()
+        c.execute("""
+            SELECT c.*, d.name as department_name, d.building_block,
+                   (SELECT COUNT(*) FROM tokens t WHERE t.counter_id = c.id AND t.status = 'waiting') as waiting_count,
+                   (SELECT token_number FROM tokens t WHERE t.counter_id = c.id AND t.status = 'serving' LIMIT 1) as now_serving
+            FROM counters c
+            JOIN departments d ON d.id = c.department_id
+            WHERE c.is_active = 1
+            ORDER BY d.name, c.name
+        """)
+        active_counters = c.fetchall()
 
-    default_counter = request.args.get("counter", "")
-    return render_template(
-        "feedback.html",
-        counters=COUNTERS,
-        student_user=student_user,
-        default_counter=default_counter,
-        error=error,
-        success=success,
-        recent_complaints=recent_complaints
-    )
+    return render_template("index.html", counters=active_counters)
 
 
-@app.route("/api/feedback", methods=["POST"])
-@app.route("/api/student/complaints", methods=["POST"])
-def api_feedback():
-    data = request.get_json(silent=True) or request.form
-    full_name = (data.get("student_name") or "").strip()
-    roll_no = (data.get("roll_no") or "").strip()
-    email = (data.get("email") or "").strip()
-    counter_slug = (data.get("counter") or "").strip() or None
-    category = (data.get("category") or "").strip()
-    subject = (data.get("subject") or "").strip()
-    message = (data.get("message") or "").strip()
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        login_id = request.form.get("login_id", "").strip()
+        password = request.form.get("password", "").strip()
+        role = request.form.get("role", "student")
 
-    student_user = current_student()
-    if student_user:
-        full_name = full_name or student_user["full_name"]
-        roll_no = roll_no or student_user["roll_no"] or ""
-        email = email or student_user["email"] or ""
-        user_id = student_user["id"]
-    else:
-        user_id = None
+        if not login_id or not password:
+            flash("Please enter both ID/Email and password.", "danger")
+            return render_template("login.html", role=role)
 
-    if not full_name or not category or not subject or not message:
-        return jsonify({"error": "Full name, category, subject, and message are required."}), 400
+        with db.get_db() as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT * FROM users
+                WHERE (LOWER(email) = LOWER(?) OR LOWER(identifier) = LOWER(?))
+                AND role = ?
+            """, (login_id, login_id, role))
+            user = c.fetchone()
 
-    conn = get_db()
-    c = conn.cursor()
-    c.execute(
-        """INSERT INTO complaints
-           (user_id, student_name, roll_no, email, counter_slug, category, subject, message, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
-        (user_id, sanitize_text(full_name), sanitize_text(roll_no, 50),
-         sanitize_text(email, 120), counter_slug,
-         sanitize_text(category, 60), sanitize_text(subject, 150),
-         sanitize_text(message, 1000))
-    )
-    conn.commit()
-    new_id = c.lastrowid
-    conn.close()
+        if user and check_password_hash(user["password_hash"], password):
+            if "is_active" in user and user["is_active"] == 0:
+                flash("Your account has been deactivated. Please contact administration.", "danger")
+                return render_template("login.html", role=role)
 
-    return jsonify({
-        "success": True,
-        "message": "Feedback submitted successfully.",
-        "complaint_id": new_id
-    })
+            session.clear()
+            session["user_id"] = user["id"]
+            session["user_name"] = user["full_name"]
+            session["user_email"] = user["email"]
+            session["user_role"] = user["role"]
+            session["user_identifier"] = user["identifier"]
+
+            flash(f"Welcome to QueueX, {user['full_name']}!", "success")
+            if user["role"] == "student":
+                return redirect(url_for("student_portal"))
+            elif user["role"] == "operator":
+                return redirect(url_for("operator_portal"))
+            elif user["role"] == "admin":
+                return redirect(url_for("admin_portal"))
+
+        flash("Invalid credentials or role selection. Please check and retry.", "danger")
+        return render_template("login.html", role=role)
+
+    role = request.args.get("role", "student")
+    return render_template("login.html", role=role)
 
 
-# ---------- OPERATOR ROUTES ----------
-
-@app.route("/operator/register", methods=["GET", "POST"])
-def operator_register():
-    error = None
+@app.route("/register", methods=["GET", "POST"])
+def register():
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
         email = request.form.get("email", "").strip().lower()
+        roll_no = request.form.get("roll_no", "").strip().upper()
         phone = request.form.get("phone", "").strip()
-        employee_id = request.form.get("employee_id", "").strip()
-        assigned_counter = request.form.get("assigned_counter", "").strip()
-        password = request.form.get("password", "")
-        confirm_password = request.form.get("confirm_password", "")
+        department = request.form.get("department", "CSE").strip()
+        course = request.form.get("course", "B.Tech").strip()
+        semester = int(request.form.get("semester", 6))
+        password = request.form.get("password", "").strip()
+        confirm_password = request.form.get("confirm_password", "").strip()
 
-        clean_phone = re.sub(r"\D", "", phone) if phone else ""
+        if not all([full_name, email, roll_no, password]):
+            flash("Please fill in all required fields.", "danger")
+            return render_template("register.html")
 
-        if not full_name:
-            error = "Please provide operator full name."
-        elif not email and not clean_phone:
-            error = "Please provide either an Email address or Mobile Number."
-        elif email and ("@" not in email or "." not in email):
-            error = "Please enter a valid email address."
-        elif clean_phone and len(clean_phone) != 10:
-            error = "Mobile number must be 10 digits."
-        elif not password or not confirm_password:
-            error = "Please enter and confirm your password."
-        elif password != confirm_password:
-            error = "Passwords do not match."
-        elif len(password) < 6:
-            error = "Password must be at least 6 characters."
-        else:
-            conn = get_db()
+        if password != confirm_password:
+            flash("Passwords do not match.", "danger")
+            return render_template("register.html")
+
+        if len(password) < 6:
+            flash("Password must be at least 6 characters.", "danger")
+            return render_template("register.html")
+
+        with db.get_db() as conn:
             c = conn.cursor()
+            c.execute("SELECT id FROM users WHERE email = ? OR identifier = ?", (email, roll_no))
+            if c.fetchone():
+                flash("An account with this Email or Roll Number already exists.", "danger")
+                return render_template("register.html")
 
-            if email:
-                c.execute("SELECT id FROM users WHERE LOWER(email) = ?", (email,))
-                if c.fetchone():
-                    conn.close()
-                    return render_template("operator_register.html", error="An account with this email already exists.", counters=COUNTERS)
-
-            if clean_phone:
-                c.execute("SELECT id FROM users WHERE phone = ?", (clean_phone,))
-                if c.fetchone():
-                    conn.close()
-                    return render_template("operator_register.html", error="An account with this mobile number already exists.", counters=COUNTERS)
-
-            emp_code = employee_id if employee_id else f"OP-{secrets.token_hex(2).upper()}"
-            if employee_id:
-                c.execute("SELECT id FROM operators WHERE LOWER(employee_id) = ?", (employee_id.lower(),))
-                if c.fetchone():
-                    conn.close()
-                    return render_template("operator_register.html", error="An operator with this Employee ID already exists.", counters=COUNTERS)
-
-            counter_id = None
-            if assigned_counter:
-                c.execute("SELECT id FROM counters WHERE slug = ?", (assigned_counter,))
-                crow = c.fetchone()
-                if crow:
-                    counter_id = crow["id"]
-
-            db_email = email if email else None
-            db_phone = clean_phone if clean_phone else None
-
-            c.execute(
-                """INSERT INTO users
-                   (full_name, email, phone, password_hash, role, roll_no, status)
-                   VALUES (?, ?, ?, ?, 'operator', ?, 'active')""",
-                (full_name, db_email, db_phone, generate_password_hash(password), emp_code)
-            )
-            new_user_id = c.lastrowid
-
-            c.execute(
-                """INSERT INTO operators
-                   (user_id, employee_id, assigned_counter_id, active)
-                   VALUES (?, ?, ?, 1)""",
-                (new_user_id, emp_code, counter_id)
-            )
+            pw_hash = generate_password_hash(password)
+            c.execute("""
+                INSERT INTO users (email, password_hash, full_name, role, identifier, phone, department, course, semester)
+                VALUES (?, ?, ?, 'student', ?, ?, ?, ?, ?)
+            """, (email, pw_hash, full_name, roll_no, phone, department, course, semester))
             conn.commit()
-            new_op_id = c.lastrowid
-            conn.close()
 
-            session["role"] = "operator"
-            session["operator_id"] = new_op_id
-            session["user_id"] = new_user_id
-            return redirect(url_for("operator_dashboard"))
+        flash("Registration successful! You can now generate queue tokens.", "success")
+        return redirect(url_for("login", role="student"))
 
-    return render_template("operator_register.html", error=error, counters=COUNTERS)
+    return render_template("register.html")
 
 
-@app.route("/operator/login", methods=["GET", "POST"])
-def operator_login():
-    error = None
-    if request.method == "POST":
-        identifier = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
+@app.route("/logout")
+def logout():
+    session.clear()
+    flash("You have been signed out successfully.", "info")
+    return redirect(url_for("login"))
 
-        # 1. Fallback for default env credentials
-        if identifier == OPERATOR_USERNAME and password == OPERATOR_PASSWORD:
-            conn = get_db()
-            c = conn.cursor()
-            op_email = f"{OPERATOR_USERNAME}@queuex.internal"
-            c.execute(
-                """SELECT u.id, op.id as operator_id FROM users u
-                   JOIN operators op ON op.user_id = u.id
-                   WHERE u.email = ? AND u.role = 'operator' AND op.active = 1""",
-                (op_email,)
-            )
-            row = c.fetchone()
-            conn.close()
-            if row:
-                session.clear()
-                session["role"] = "operator"
-                session["operator_id"] = row["operator_id"]
-                session["user_id"] = row["id"]
-                return redirect(url_for("operator_dashboard"))
 
-        # 2. Database lookup by Email, Mobile Number, Employee ID, or Username
-        clean_phone = re.sub(r"\D", "", identifier) if identifier else ""
-        op_email = f"{identifier}@queuex.internal"
-        conn = get_db()
+# -------------------------------------------------------------
+# PHASE 3: COMPLETE STUDENT PORTAL
+# -------------------------------------------------------------
+
+@app.route("/student")
+@app.route("/student/dashboard")
+@login_required(role="student")
+def student_portal():
+    student_id = session["user_id"]
+
+    with db.get_db() as conn:
         c = conn.cursor()
-        c.execute(
-            """SELECT u.id, u.password_hash, u.status, op.id as operator_id
-               FROM users u
-               JOIN operators op ON op.user_id = u.id
-               WHERE u.role = 'operator' AND op.active = 1
-                 AND (
-                     LOWER(u.email) = ?
-                     OR LOWER(u.email) = ?
-                     OR (u.phone = ? AND ? != '')
-                     OR LOWER(op.employee_id) = ?
-                     OR LOWER(u.roll_no) = ?
-                 )""",
-            (identifier.lower(), op_email.lower(), clean_phone, clean_phone, identifier.lower(), identifier.lower())
-        )
-        row = c.fetchone()
-        conn.close()
 
-        if row and row["password_hash"] and check_password_hash(row["password_hash"], password):
-            if row["status"] != "active":
-                error = "This operator account is deactivated. Contact admin."
-            else:
-                session.clear()
-                session["role"] = "operator"
-                session["operator_id"] = row["operator_id"]
-                session["user_id"] = row["id"]
-                return redirect(url_for("operator_dashboard"))
-        else:
-            error = "Invalid username, email, phone number, or password."
-    return render_template("operator_login.html", error=error)
+        # 1. Fetch Student Details
+        c.execute("SELECT * FROM users WHERE id = ?", (student_id,))
+        student = c.fetchone()
 
+        # 2. Check for Active Token (status: 'waiting' or 'serving')
+        c.execute("""
+            SELECT t.*, c.name as counter_name, c.code as counter_code, c.avg_service_time_mins,
+                   d.name as department_name, d.building_block
+            FROM tokens t
+            JOIN counters c ON c.id = t.counter_id
+            JOIN departments d ON d.id = t.department_id
+            WHERE t.student_id = ? AND t.status IN ('waiting', 'serving')
+            ORDER BY t.id DESC LIMIT 1
+        """, (student_id,))
+        active_token = c.fetchone()
 
-def current_operator():
-    """Return dictionary of current authenticated operator and assigned counter details."""
-    if session.get("role") != "operator" or not session.get("operator_id"):
-        return None
-    conn = get_db()
-    c = conn.cursor()
-    c.execute(
-        """SELECT op.id as operator_id, op.employee_id, op.assigned_counter_id,
-                  co.slug as assigned_slug, co.name as assigned_name,
-                  u.id as user_id, u.full_name, u.email, u.phone
-           FROM operators op
-           JOIN users u ON u.id = op.user_id
-           LEFT JOIN counters co ON co.id = op.assigned_counter_id
-           WHERE op.id = ? AND op.active = 1 AND u.status = 'active' AND u.role = 'operator'""",
-        (session["operator_id"],)
+        active_meta = None
+        if active_token:
+            # Calculate people ahead & estimated waiting time
+            c.execute("""
+                SELECT COUNT(*) as count FROM tokens
+                WHERE counter_id = ? AND status = 'waiting' AND id < ?
+            """, (active_token["counter_id"], active_token["id"]))
+            people_ahead = c.fetchone()["count"]
+
+            # Current serving token at counter
+            c.execute("""
+                SELECT token_number FROM tokens
+                WHERE counter_id = ? AND status = 'serving'
+                ORDER BY id DESC LIMIT 1
+            """, (active_token["counter_id"],))
+            srv_row = c.fetchone()
+            current_serving = srv_row["token_number"] if srv_row else None
+
+            est_mins = people_ahead * active_token["avg_service_time_mins"]
+            if active_token["status"] == "serving":
+                est_mins = 0
+
+            # QR Code string & data
+            qr_payload = f"QUEUEX|CGC|T{active_token['token_number']}|C{active_token['counter_code']}|{active_token['token_salt']}"
+            qr_base64 = generate_qr_base64(qr_payload)
+
+            active_meta = {
+                "people_ahead": people_ahead,
+                "current_serving": current_serving,
+                "est_mins": est_mins,
+                "qr_image": qr_base64
+            }
+
+        # 3. Available Departments with active counters
+        c.execute("""
+            SELECT d.*,
+                   (SELECT COUNT(*) FROM counters c WHERE c.department_id = d.id AND c.is_active = 1) as open_counters,
+                   (SELECT COUNT(*) FROM tokens t WHERE t.department_id = d.id AND t.status = 'waiting') as total_waiting
+            FROM departments d
+            ORDER BY d.name
+        """)
+        departments = c.fetchall()
+
+        # 4. Active Counters
+        c.execute("""
+            SELECT c.*, d.name as department_name
+            FROM counters c
+            JOIN departments d ON d.id = c.department_id
+            WHERE c.is_active = 1
+            ORDER BY d.name, c.name
+        """)
+        counters = c.fetchall()
+
+        # 5. Token History for Student
+        c.execute("""
+            SELECT t.*, c.name as counter_name, d.name as department_name
+            FROM tokens t
+            JOIN counters c ON c.id = t.counter_id
+            JOIN departments d ON d.id = t.department_id
+            WHERE t.student_id = ?
+            ORDER BY t.id DESC LIMIT 10
+        """, (student_id,))
+        token_history = c.fetchall()
+
+    return render_template(
+        "student_portal.html",
+        student=student,
+        active_token=active_token,
+        active_meta=active_meta,
+        departments=departments,
+        counters=counters,
+        token_history=token_history
     )
-    row = c.fetchone()
-    conn.close()
-    return dict(row) if row else None
 
 
-def operator_can_manage_counter(counter_slug):
-    """Ensure operators can only manage their assigned counters.
-    Operators without an assigned counter (e.g. float operators) can manage any counter.
-    """
-    op = current_operator()
-    if not op:
-        return False
-    # If operator has an assigned counter, they must match
-    if op.get("assigned_slug") and op["assigned_slug"] != counter_slug:
-        return False
-    return True
+@app.route("/student/generate-token", methods=["POST"])
+@login_required(role="student")
+def student_generate_token():
+    student_id = session["user_id"]
+    counter_id = request.form.get("counter_id")
+    service_reason = request.form.get("service_reason", "").strip()
+
+    if not counter_id:
+        flash("Please select a service counter.", "danger")
+        return redirect(url_for("student_portal"))
+
+    # Acquire re-entrant lock to ensure strictly sequential token numbers and prevent simultaneous double booking
+    with QUEUE_LOCK:
+        with db.get_db() as conn:
+            c = conn.cursor()
+
+            # 1. Prevent duplicate active tokens for this student across all counters
+            c.execute("""
+                SELECT id, token_number, counter_id FROM tokens
+                WHERE student_id = ? AND status IN ('waiting', 'serving')
+            """, (student_id,))
+            existing_active = c.fetchone()
+            if existing_active:
+                flash("You already have an active queue token. Please wait or cancel it first.", "warning")
+                return redirect(url_for("student_portal"))
+
+            # 2. Check counter validity & open/paused state
+            c.execute("SELECT * FROM counters WHERE id = ?", (counter_id,))
+            counter = c.fetchone()
+            if not counter or not counter["is_active"]:
+                flash("Selected counter is currently closed. Please select an open counter.", "danger")
+                return redirect(url_for("student_portal"))
+
+            if counter["is_paused"]:
+                flash("This counter is currently paused. Please check back in a few minutes.", "warning")
+                return redirect(url_for("student_portal"))
+
+            # 3. Calculate daily sequential token number for this counter with transaction integrity
+            # PostgreSQL date: CURRENT_DATE, SQLite: date('now')
+            if db.is_postgres():
+                date_cond = "created_at::DATE = CURRENT_DATE"
+            else:
+                date_cond = "date(created_at) = date('now')"
+
+            c.execute(f"""
+                SELECT COALESCE(MAX(token_number), 0) + 1 as next_token
+                FROM tokens
+                WHERE counter_id = ? AND {date_cond}
+            """, (counter_id,))
+            next_token_num = c.fetchone()["next_token"]
+
+            # 4. Fetch student details
+            c.execute("SELECT full_name, identifier, phone FROM users WHERE id = ?", (student_id,))
+            st = c.fetchone()
+
+            token_salt = secrets.token_hex(8)
+
+            c.execute("""
+                INSERT INTO tokens (token_number, counter_id, department_id, student_id, student_name, student_roll, student_phone, service_reason, status, token_salt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?)
+            """, (next_token_num, counter_id, counter["department_id"], student_id, st["full_name"], st["identifier"], st["phone"], service_reason, token_salt))
+            token_id = c.lastrowid
+
+            # Insert notification
+            c.execute("""
+                INSERT INTO notifications (user_id, title, message)
+                VALUES (?, ?, ?)
+            """, (student_id, "Token Generated", f"Token #{next_token_num} generated for {counter['name']}."))
+
+            conn.commit()
+
+        # Broadcast WebSocket event to counter room
+        broadcast_queue_update(counter_id, "token_generated", {"token_number": next_token_num, "token_id": token_id})
+
+    flash(f"Token #{next_token_num} generated successfully! You are in line.", "success")
+    return redirect(url_for("student_token_status", token_id=token_id))
 
 
-@app.route("/operator/logout")
-def operator_logout():
-    session.pop("role", None)
-    session.pop("operator_id", None)
-    session.pop("user_id", None)
-    return redirect(url_for("operator_login"))
+@app.route("/student/token/<int:token_id>")
+@login_required(role="student")
+def student_token_status(token_id):
+    student_id = session["user_id"]
+
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT t.*, c.name as counter_name, c.code as counter_code, c.avg_service_time_mins,
+                   d.name as department_name, d.building_block
+            FROM tokens t
+            JOIN counters c ON c.id = t.counter_id
+            JOIN departments d ON d.id = t.department_id
+            WHERE t.id = ? AND t.student_id = ?
+        """, (token_id, student_id))
+        token = c.fetchone()
+
+        if not token:
+            flash("Token record not found.", "danger")
+            return redirect(url_for("student_portal"))
+
+        # People ahead in waiting status
+        c.execute("""
+            SELECT COUNT(*) as count FROM tokens
+            WHERE counter_id = ? AND status = 'waiting' AND id < ?
+        """, (token["counter_id"], token["id"]))
+        people_ahead = c.fetchone()["count"]
+
+        # Current serving token
+        c.execute("""
+            SELECT token_number FROM tokens
+            WHERE counter_id = ? AND status = 'serving'
+            ORDER BY id DESC LIMIT 1
+        """, (token["counter_id"],))
+        srv_row = c.fetchone()
+        current_serving = srv_row["token_number"] if srv_row else None
+
+        est_mins = people_ahead * token["avg_service_time_mins"]
+        if token["status"] == "serving":
+            est_mins = 0
+
+        qr_payload = f"QUEUEX|CGC|T{token['token_number']}|C{token['counter_code']}|{token['token_salt']}"
+        qr_base64 = generate_qr_base64(qr_payload)
+
+    return render_template(
+        "student_token_status.html",
+        token=token,
+        people_ahead=people_ahead,
+        current_serving=current_serving,
+        est_mins=est_mins,
+        qr_image=qr_base64
+    )
+
+
+@app.route("/api/student/token/<int:token_id>/status")
+@login_required(role="student")
+def api_student_token_status(token_id):
+    """Real-time JSON endpoint for client-side live queue polling."""
+    student_id = session["user_id"]
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT t.status, t.token_number, t.counter_id, c.avg_service_time_mins
+            FROM tokens t
+            JOIN counters c ON c.id = t.counter_id
+            WHERE t.id = ? AND t.student_id = ?
+        """, (token_id, student_id))
+        token = c.fetchone()
+
+        if not token:
+            return jsonify({"error": "Token not found"}), 404
+
+        c.execute("""
+            SELECT COUNT(*) as count FROM tokens
+            WHERE counter_id = ? AND status = 'waiting' AND id < ?
+        """, (token["counter_id"], token_id))
+        people_ahead = c.fetchone()["count"]
+
+        c.execute("""
+            SELECT token_number FROM tokens
+            WHERE counter_id = ? AND status = 'serving'
+            ORDER BY id DESC LIMIT 1
+        """, (token["counter_id"],))
+        srv_row = c.fetchone()
+        current_serving = srv_row["token_number"] if srv_row else None
+
+        est_mins = people_ahead * token["avg_service_time_mins"]
+        if token["status"] == "serving":
+            est_mins = 0
+
+        return jsonify({
+            "status": token["status"],
+            "token_number": token["token_number"],
+            "people_ahead": people_ahead,
+            "current_serving": current_serving,
+            "estimated_mins": est_mins
+        })
+
+
+@app.route("/student/token/cancel/<int:token_id>", methods=["POST"])
+@login_required(role="student")
+def student_cancel_token(token_id):
+    student_id = session["user_id"]
+
+    with QUEUE_LOCK:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            # Enforce IDOR protection: token must belong to authenticated student
+            c.execute("SELECT status, counter_id, token_number FROM tokens WHERE id = ? AND student_id = ?", (token_id, student_id))
+            row = c.fetchone()
+
+            if not row:
+                flash("Token not found or unauthorized.", "danger")
+                return redirect(url_for("student_portal"))
+
+            if row["status"] != "waiting":
+                flash("Only waiting tokens can be cancelled.", "warning")
+                return redirect(url_for("student_portal"))
+
+            c.execute("UPDATE tokens SET status = 'cancelled' WHERE id = ? AND status = 'waiting'", (token_id,))
+            c.execute("""
+                INSERT INTO audit_logs (action, user_id, user_role, details)
+                VALUES ('CANCEL_TOKEN', ?, 'student', ?)
+            """, (student_id, f"Cancelled Token #{row['token_number']} at Counter ID {row['counter_id']}"))
+            conn.commit()
+
+        broadcast_queue_update(row["counter_id"], "token_cancelled", {"token_id": token_id, "token_number": row["token_number"]})
+
+    flash("Your queue token has been cancelled.", "info")
+    return redirect(url_for("student_portal"))
+
+
+@app.route("/student/profile", methods=["GET", "POST"])
+@login_required(role="student")
+def student_profile():
+    student_id = session["user_id"]
+
+    with db.get_db() as conn:
+        c = conn.cursor()
+
+        if request.method == "POST":
+            full_name = request.form.get("full_name", "").strip()
+            phone = request.form.get("phone", "").strip()
+            department = request.form.get("department", "CSE").strip()
+            course = request.form.get("course", "B.Tech").strip()
+            semester = int(request.form.get("semester", 6))
+
+            if not full_name:
+                flash("Full name cannot be empty.", "danger")
+                return redirect(url_for("student_profile"))
+
+            c.execute("""
+                UPDATE users
+                SET full_name = ?, phone = ?, department = ?, course = ?, semester = ?
+                WHERE id = ?
+            """, (full_name, phone, department, course, semester, student_id))
+            conn.commit()
+
+            session["user_name"] = full_name
+            flash("Profile updated successfully!", "success")
+            return redirect(url_for("student_profile"))
+
+        c.execute("SELECT * FROM users WHERE id = ?", (student_id,))
+        student = c.fetchone()
+
+    return render_template("student_profile.html", student=student)
+
+
+@app.route("/student/settings", methods=["GET", "POST"])
+@login_required(role="student")
+def student_settings():
+    student_id = session["user_id"]
+
+    if request.method == "POST":
+        action = request.form.get("action")
+
+        if action == "change_password":
+            current_pw = request.form.get("current_password", "").strip()
+            new_pw = request.form.get("new_password", "").strip()
+            confirm_pw = request.form.get("confirm_password", "").strip()
+
+            if not current_pw or not new_pw:
+                flash("Please fill out all password fields.", "danger")
+                return redirect(url_for("student_settings"))
+
+            if new_pw != confirm_pw:
+                flash("New passwords do not match.", "danger")
+                return redirect(url_for("student_settings"))
+
+            if len(new_pw) < 6:
+                flash("New password must be at least 6 characters.", "danger")
+                return redirect(url_for("student_settings"))
+
+            with db.get_db() as conn:
+                c = conn.cursor()
+                c.execute("SELECT password_hash FROM users WHERE id = ?", (student_id,))
+                user = c.fetchone()
+
+                if not check_password_hash(user["password_hash"], current_pw):
+                    flash("Current password incorrect.", "danger")
+                    return redirect(url_for("student_settings"))
+
+                c.execute("UPDATE users SET password_hash = ? WHERE id = ?", (generate_password_hash(new_pw), student_id))
+                conn.commit()
+
+            flash("Password changed successfully!", "success")
+            return redirect(url_for("student_settings"))
+
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE id = ?", (student_id,))
+        student = c.fetchone()
+
+        c.execute("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 10", (student_id,))
+        notifications = c.fetchall()
+
+    return render_template("student_settings.html", student=student, notifications=notifications)
+
+
+@app.route("/student/notifications/clear", methods=["POST"])
+@login_required(role="student")
+def clear_notifications():
+    student_id = session["user_id"]
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("UPDATE notifications SET is_read = 1 WHERE user_id = ?", (student_id,))
+        conn.commit()
+    flash("Notifications marked as read.", "info")
+    return redirect(url_for("student_settings"))
+
+
+# -------------------------------------------------------------
+# PHASE 4: COMPLETE OPERATOR PORTAL
+# -------------------------------------------------------------
+
+def get_operator_counter(cursor, operator_id):
+    """Retrieve counter assigned to the authenticated operator."""
+    cursor.execute("""
+        SELECT c.*, d.name as department_name, d.building_block
+        FROM counters c
+        JOIN departments d ON d.id = c.department_id
+        WHERE c.assigned_operator_id = ?
+        LIMIT 1
+    """, (operator_id,))
+    return cursor.fetchone()
 
 
 @app.route("/operator")
-def operator_dashboard():
-    if not is_operator():
-        return redirect(url_for("operator_login"))
-    op = current_operator()
-    assigned_counter = None
-    if op and op.get("assigned_slug"):
-        assigned_counter = get_counter_by_slug(op["assigned_slug"])
-    return render_template(
-        "operator_dashboard.html",
-        counters=COUNTERS,
-        assigned_counter=assigned_counter,
-        operator_info=op
-    )
-
-
-@app.route("/api/operator/queue")
-def api_operator_queue():
-    if not is_operator():
-        return jsonify({"error": "unauthorized"}), 401
-
-    slug = request.args.get("counter")
-    if not is_valid_counter(slug):
-        return jsonify({"error": "invalid counter"}), 400
-
-    op = current_operator()
-    if not operator_can_manage_counter(slug):
-        return jsonify({
-            "error": f"Unauthorized: You are assigned to '{op['assigned_name']}' and cannot view or manage '{get_counter_name(slug)}'."
-        }), 403
-
-    conn = get_db()
-    c = conn.cursor()
-
-    c.execute("SELECT current_token, status, estimated_service_minutes FROM counters WHERE slug = ?", (slug,))
-    row = c.fetchone()
-    current_token = row["current_token"] if row else 0
-    counter_status = row["status"] if row and row["status"] else "open"
-
-    # Fetch currently serving token details
-    serving_student = None
-    if current_token > 0:
-        c.execute(
-            """SELECT id, token_number, student_name, roll_no, phone, father_name, created_at, called_at, student_uid
-               FROM tokens
-               WHERE counter_slug = ? AND token_number = ? AND status = 'served'""",
-            (slug, current_token)
-        )
-        s_row = c.fetchone()
-        if s_row:
-            serving_student = dict(s_row)
-
-    # Fetch all waiting tokens with full student details
-    c.execute(
-        """SELECT id, token_number, student_name, roll_no, phone, father_name, created_at, student_uid, priority
-           FROM tokens
-           WHERE counter_slug = ? AND status = 'waiting'
-           ORDER BY priority DESC, token_number ASC""",
-        (slug,)
-    )
-    waiting = [dict(r) for r in c.fetchall()]
-
-    c.execute(
-        "SELECT COUNT(*) as cnt FROM tokens WHERE counter_slug = ? AND status = 'served' AND date(created_at) = date('now')",
-        (slug,)
-    )
-    served_today = c.fetchone()["cnt"]
-
-    conn.close()
-
-    return jsonify({
-        "current_token": current_token,
-        "serving_student": serving_student,
-        "waiting_count": len(waiting),
-        "queue": waiting,
-        "counter_status": counter_status,
-        "served_today": served_today,
-        "counter_name": get_counter_name(slug),
-        "assigned_slug": op.get("assigned_slug") if op else None
-    })
-
-
-@app.route("/api/operator/call-next", methods=["POST"])
-def call_next():
-    if not is_operator():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(silent=True) or request.form
-    slug = payload.get("counter")
-    if not is_valid_counter(slug):
-        return jsonify({"error": "invalid counter"}), 400
-
-    op = current_operator()
-    if not operator_can_manage_counter(slug):
-        return jsonify({
-            "error": f"Unauthorized: You are assigned to '{op['assigned_name']}' and cannot manage '{get_counter_name(slug)}'."
-        }), 403
-
-    conn = get_db()
-    # Serialise with an EXCLUSIVE transaction to prevent duplicate token serving & race conditions
-    conn.isolation_level = None
-    c = conn.cursor()
-    c.execute("BEGIN EXCLUSIVE")
-    try:
-        c.execute("SELECT current_token FROM counters WHERE slug = ?", (slug,))
-        row = c.fetchone()
-        current_token = row["current_token"] if row else 0
-
-        # Select the next waiting token in order
-        c.execute(
-            """SELECT id, token_number, student_name, roll_no, phone, father_name
-               FROM tokens
-               WHERE counter_slug = ? AND status = 'waiting'
-               ORDER BY priority DESC, token_number ASC LIMIT 1""",
-            (slug,)
-        )
-        next_row = c.fetchone()
-        if not next_row:
-            c.execute("COMMIT")
-            conn.close()
-            return jsonify({"error": "queue is empty", "current_token": current_token}), 400
-
-        new_current = next_row["token_number"]
-        token_id = next_row["id"]
-        now_iso = datetime.now().isoformat(timespec="seconds")
-        op_user_id = session.get("user_id")
-
-        # Advance counter and mark token as served atomically
-        c.execute("UPDATE counters SET current_token = ? WHERE slug = ?", (new_current, slug))
-        c.execute(
-            """UPDATE tokens
-               SET status = 'served', served_at = ?, called_at = ?, completed_by = ?
-               WHERE id = ? AND status = 'waiting'""",
-            (now_iso, now_iso, op_user_id, token_id)
-        )
-        if c.rowcount == 0:
-            # Another concurrent request already served this token
-            c.execute("ROLLBACK")
-            conn.close()
-            return jsonify({"error": "Token was claimed by another request, please try again"}), 409
-
-        c.execute("COMMIT")
-    except Exception as e:
-        c.execute("ROLLBACK")
-        conn.close()
-        return jsonify({"error": "Could not advance queue, please try again"}), 500
-    conn.close()
-
-    broadcast_queue_update(slug)
-    return jsonify({
-        "current_token": new_current,
-        "token_number": new_current,
-        "student_name": next_row["student_name"],
-        "roll_no": next_row["roll_no"]
-    })
-
-
-@app.route("/api/operator/recall", methods=["POST"])
-def recall_token():
-    """Re-announce the currently serving token without advancing the queue."""
-    if not is_operator():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(silent=True) or request.form
-    slug = payload.get("counter")
-    if not is_valid_counter(slug):
-        return jsonify({"error": "invalid counter"}), 400
-
-    op = current_operator()
-    if not operator_can_manage_counter(slug):
-        return jsonify({
-            "error": f"Unauthorized: You are assigned to '{op['assigned_name']}' and cannot manage '{get_counter_name(slug)}'."
-        }), 403
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT current_token FROM counters WHERE slug = ?", (slug,))
-    row = c.fetchone()
-    current_token = row["current_token"] if row else 0
-
-    # Fetch details of recalled token
-    c.execute(
-        """SELECT student_name, roll_no FROM tokens
-           WHERE counter_slug = ? AND token_number = ? AND status = 'served'""",
-        (slug, current_token)
-    )
-    tok_row = c.fetchone()
-    conn.close()
-
-    socketio.emit("token_recalled", {
-        "counter_slug": slug,
-        "current_token": current_token,
-        "student_name": tok_row["student_name"] if tok_row else ""
-    }, room=slug)
-
-    return jsonify({
-        "current_token": current_token,
-        "student_name": tok_row["student_name"] if tok_row else "",
-        "message": f"Token #{current_token} recalled."
-    })
-
-
-@app.route("/api/operator/skip", methods=["POST"])
-def skip_token():
-    if not is_operator():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(silent=True) or request.form
-    slug = payload.get("counter")
-    if not is_valid_counter(slug):
-        return jsonify({"error": "invalid counter"}), 400
-
-    op = current_operator()
-    if not operator_can_manage_counter(slug):
-        return jsonify({
-            "error": f"Unauthorized: You are assigned to '{op['assigned_name']}' and cannot manage '{get_counter_name(slug)}'."
-        }), 403
-
-    conn = get_db()
-    conn.isolation_level = None
-    c = conn.cursor()
-    c.execute("BEGIN EXCLUSIVE")
-    try:
-        c.execute("SELECT current_token FROM counters WHERE slug = ?", (slug,))
-        row = c.fetchone()
-        current_token = row["current_token"] if row else 0
-
-        c.execute(
-            """SELECT id, token_number FROM tokens
-               WHERE counter_slug = ? AND status = 'waiting'
-               ORDER BY priority DESC, token_number ASC LIMIT 1""",
-            (slug,)
-        )
-        next_row = c.fetchone()
-        if not next_row:
-            c.execute("COMMIT")
-            conn.close()
-            return jsonify({"error": "queue is empty", "current_token": current_token}), 400
-
-        new_current = next_row["token_number"]
-        token_id = next_row["id"]
-        now_iso = datetime.now().isoformat(timespec="seconds")
-
-        c.execute("UPDATE counters SET current_token = ? WHERE slug = ?", (new_current, slug))
-        c.execute(
-            "UPDATE tokens SET status = 'skipped', skipped_at = ? WHERE id = ? AND status = 'waiting'",
-            (now_iso, token_id)
-        )
-        if c.rowcount == 0:
-            c.execute("ROLLBACK")
-            conn.close()
-            return jsonify({"error": "Token state changed, please retry"}), 409
-
-        c.execute("COMMIT")
-    except Exception:
-        c.execute("ROLLBACK")
-        conn.close()
-        return jsonify({"error": "Could not skip token, please try again"}), 500
-    conn.close()
-
-    broadcast_queue_update(slug)
-    return jsonify({"current_token": new_current, "skipped_token": new_current})
-
-
-@app.route("/api/operator/reset", methods=["POST"])
-def reset_queue():
-    if not is_operator():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(silent=True) or request.form
-    slug = payload.get("counter")
-    if not is_valid_counter(slug):
-        return jsonify({"error": "invalid counter"}), 400
-
-    op = current_operator()
-    if not operator_can_manage_counter(slug):
-        return jsonify({
-            "error": f"Unauthorized: You are assigned to '{op['assigned_name']}' and cannot manage '{get_counter_name(slug)}'."
-        }), 403
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("UPDATE counters SET current_token = 0 WHERE slug = ?", (slug,))
-    c.execute("DELETE FROM tokens WHERE counter_slug = ?", (slug,))
-    conn.commit()
-    conn.close()
-
-    broadcast_queue_update(slug)
-    return jsonify({"message": "reset done", "current_token": 0})
-
-
-@app.route("/api/operator/set-status", methods=["POST"])
-def set_counter_status():
-    """Pause / Resume / Open / Close a counter station."""
-    if not is_operator():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(silent=True) or request.form
-    slug = payload.get("counter")
-    new_status = payload.get("status")
-
-    if not is_valid_counter(slug):
-        return jsonify({"error": "invalid counter"}), 400
-
-    op = current_operator()
-    if not operator_can_manage_counter(slug):
-        return jsonify({
-            "error": f"Unauthorized: You are assigned to '{op['assigned_name']}' and cannot manage '{get_counter_name(slug)}'."
-        }), 403
-
-    if new_status not in ("open", "paused", "closed"):
-        return jsonify({"error": "invalid status"}), 400
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("UPDATE counters SET status = ? WHERE slug = ?", (new_status, slug))
-    conn.commit()
-    conn.close()
-
-    broadcast_queue_update(slug)
-    return jsonify({"status": new_status, "counter_slug": slug})
-
-
-# ---------- SUPER ADMIN ROUTES ----------
-
-ADMIN_REGISTRATION_KEY = os.environ.get("ADMIN_REGISTRATION_KEY", ADMIN_PASSWORD)
-
-@app.route("/admin/register", methods=["GET", "POST"])
-def admin_register():
-    error = None
-    if request.method == "POST":
-        full_name = request.form.get("full_name", "").strip()
-        email = request.form.get("email", "").strip().lower()
-        phone = request.form.get("phone", "").strip()
-        department = request.form.get("department", "").strip()
-        admin_key = request.form.get("admin_key", "").strip()
-        password = request.form.get("password", "")
-        confirm_password = request.form.get("confirm_password", "")
-
-        clean_phone = re.sub(r"\D", "", phone) if phone else ""
-
-        if not full_name:
-            error = "Please provide administrator full name."
-        elif not email and not clean_phone:
-            error = "Please provide either an Email address or Mobile Number."
-        elif email and ("@" not in email or "." not in email):
-            error = "Please enter a valid email address."
-        elif clean_phone and len(clean_phone) != 10:
-            error = "Mobile number must be 10 digits."
-        elif admin_key != ADMIN_REGISTRATION_KEY and admin_key != ADMIN_PASSWORD:
-            error = "Invalid administrator authorization key. Contact the principal admin."
-        elif not password or not confirm_password:
-            error = "Please enter and confirm your password."
-        elif password != confirm_password:
-            error = "Passwords do not match."
-        elif len(password) < 6:
-            error = "Password must be at least 6 characters."
-        else:
-            conn = get_db()
-            c = conn.cursor()
-
-            if email:
-                c.execute("SELECT id FROM users WHERE LOWER(email) = ?", (email,))
-                if c.fetchone():
-                    conn.close()
-                    return render_template("admin_register.html", error="An account with this email already exists.")
-
-            if clean_phone:
-                c.execute("SELECT id FROM users WHERE phone = ?", (clean_phone,))
-                if c.fetchone():
-                    conn.close()
-                    return render_template("admin_register.html", error="An account with this mobile number already exists.")
-
-            db_email = email if email else None
-            db_phone = clean_phone if clean_phone else None
-
-            c.execute(
-                """INSERT INTO users
-                   (full_name, email, phone, password_hash, role, department, status)
-                   VALUES (?, ?, ?, ?, 'admin', ?, 'active')""",
-                (full_name, db_email, db_phone, generate_password_hash(password), department)
-            )
-            conn.commit()
-            new_user_id = c.lastrowid
-            conn.close()
-
-            session["role"] = "admin"
-            session["user_id"] = new_user_id
-            return redirect(url_for("admin_dashboard"))
-
-    return render_template("admin_register.html", error=error)
-
-
-@app.route("/admin/login", methods=["GET", "POST"])
-def admin_login():
-    error = None
-    if request.method == "POST":
-        identifier = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
-
-        # 1. Fallback for default env credentials
-        if identifier == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-            session.clear()
-            session["role"] = "admin"
-            return redirect(url_for("admin_dashboard"))
-
-        # 2. Database lookup by Email, Mobile Number, or Admin Username
-        clean_phone = re.sub(r"\D", "", identifier) if identifier else ""
-        admin_email = f"{identifier}@queuex.internal"
-        conn = get_db()
+@app.route("/operator/dashboard")
+@login_required(role="operator")
+def operator_portal():
+    operator_id = session["user_id"]
+
+    with db.get_db() as conn:
         c = conn.cursor()
-        c.execute(
-            """SELECT id, password_hash, status FROM users
-               WHERE role = 'admin'
-                 AND (
-                     LOWER(email) = ?
-                     OR LOWER(email) = ?
-                     OR (phone = ? AND ? != '')
-                     OR LOWER(full_name) = ?
-                     OR LOWER(roll_no) = ?
-                 )""",
-            (identifier.lower(), admin_email.lower(), clean_phone, clean_phone, identifier.lower(), identifier.lower())
-        )
-        row = c.fetchone()
-        conn.close()
 
-        if row and row["password_hash"] and check_password_hash(row["password_hash"], password):
-            if row["status"] != "active":
-                error = "This administrator account is deactivated."
-            else:
-                session.clear()
-                session["role"] = "admin"
-                session["user_id"] = row["id"]
-                return redirect(url_for("admin_dashboard"))
-        else:
-            error = "Invalid administrator username, email, phone number, or password."
-    return render_template("admin_login.html", error=error)
+        # 1. Fetch Operator and Assigned Counter
+        c.execute("SELECT * FROM users WHERE id = ?", (operator_id,))
+        operator = c.fetchone()
+
+        counter = get_operator_counter(c, operator_id)
+
+        if not counter:
+            return render_template(
+                "operator_portal.html",
+                operator=operator,
+                counter=None,
+                currently_serving=None,
+                waiting_tokens=[],
+                stats={"waiting": 0, "completed": 0, "skipped": 0, "avg_time": 0}
+            )
+
+        # 2. Currently Serving Token
+        c.execute("""
+            SELECT * FROM tokens
+            WHERE counter_id = ? AND status = 'serving'
+            ORDER BY called_at DESC LIMIT 1
+        """, (counter["id"],))
+        currently_serving = c.fetchone()
+
+        # 3. Waiting Queue for this counter
+        c.execute("""
+            SELECT * FROM tokens
+            WHERE counter_id = ? AND status = 'waiting'
+            ORDER BY id ASC
+        """, (counter["id"],))
+        waiting_tokens = c.fetchall()
+
+        # 4. Previously called / skipped token (for recall)
+        c.execute("""
+            SELECT * FROM tokens
+            WHERE counter_id = ? AND status = 'skipped'
+            ORDER BY id DESC LIMIT 1
+        """, (counter["id"],))
+        last_skipped = c.fetchone()
+
+        # 5. Daily Counter Statistics
+        c.execute("""
+            SELECT
+                SUM(CASE WHEN status = 'waiting' THEN 1 ELSE 0 END) as waiting_count,
+                SUM(CASE WHEN status = 'served' THEN 1 ELSE 0 END) as completed_count,
+                SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped_count
+            FROM tokens
+            WHERE counter_id = ? AND date(created_at) = date('now')
+        """, (counter["id"],))
+        stat_row = c.fetchone()
+
+        stats = {
+            "waiting": stat_row["waiting_count"] or 0,
+            "completed": stat_row["completed_count"] or 0,
+            "skipped": stat_row["skipped_count"] or 0,
+            "avg_time": counter["avg_service_time_mins"] or 8
+        }
+
+    return render_template(
+        "operator_portal.html",
+        operator=operator,
+        counter=counter,
+        currently_serving=currently_serving,
+        waiting_tokens=waiting_tokens,
+        last_skipped=last_skipped,
+        stats=stats
+    )
 
 
-@app.route("/admin/logout")
-def admin_logout():
-    session.pop("role", None)
-    session.pop("user_id", None)
-    return redirect(url_for("admin_login"))
+@app.route("/operator/call-next", methods=["POST"])
+@login_required(role="operator")
+def operator_call_next():
+    operator_id = session["user_id"]
+
+    with QUEUE_LOCK:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            counter = get_operator_counter(c, operator_id)
+            if not counter:
+                flash("No counter assigned to your account.", "danger")
+                return redirect(url_for("operator_portal"))
+
+            if not counter["is_active"]:
+                flash("Counter is closed. Reopen counter before calling tokens.", "warning")
+                return redirect(url_for("operator_portal"))
+
+            if counter["is_paused"]:
+                flash("Queue is paused. Resume queue before calling tokens.", "warning")
+                return redirect(url_for("operator_portal"))
+
+            # Check if already serving an active token
+            c.execute("SELECT id, token_number FROM tokens WHERE counter_id = ? AND status = 'serving'", (counter["id"],))
+            active_serving = c.fetchone()
+            if active_serving:
+                flash(f"Token #{active_serving['token_number']} is currently being served. Complete or skip it before calling next.", "warning")
+                return redirect(url_for("operator_portal"))
+
+            # Get next waiting token in strict FIFO order
+            c.execute("""
+                SELECT * FROM tokens
+                WHERE counter_id = ? AND status = 'waiting'
+                ORDER BY id ASC LIMIT 1
+            """, (counter["id"],))
+            next_token = c.fetchone()
+
+            if not next_token:
+                flash("No students waiting in queue.", "info")
+                return redirect(url_for("operator_portal"))
+
+            # Transition status to 'serving'
+            c.execute("""
+                UPDATE tokens
+                SET status = 'serving', called_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'waiting'
+            """, (next_token["id"],))
+
+            # Notify student
+            c.execute("""
+                INSERT INTO notifications (user_id, title, message)
+                VALUES (?, ?, ?)
+            """, (
+                next_token["student_id"],
+                "It's Your Turn!",
+                f"Token #{next_token['token_number']} called at {counter['name']} ({counter['code']}). Please proceed to desk."
+            ))
+
+            # Audit log
+            c.execute("""
+                INSERT INTO audit_logs (action, user_id, user_role, details)
+                VALUES (?, ?, 'operator', ?)
+            """, ("CALL_NEXT", operator_id, f"Called Token #{next_token['token_number']} for Counter {counter['code']}"))
+
+            conn.commit()
+
+        # Emit live update to counter room
+        broadcast_queue_update(counter["id"], "token_called", {
+            "token_id": next_token["id"],
+            "token_number": next_token["token_number"],
+            "student_name": next_token["student_name"],
+            "counter_name": counter["name"],
+            "counter_code": counter["code"]
+        })
+
+    flash(f"Calling Token #{next_token['token_number']} ({next_token['student_name']})!", "success")
+    return redirect(url_for("operator_portal"))
 
 
-def get_date_filter_clause(date_param, col="created_at"):
-    """Return SQL condition and parameter list for date filtering across SQLite and PostgreSQL."""
-    if is_postgres():
-        if not date_param or date_param == "today":
-            return f"{col}::DATE = CURRENT_DATE", []
-        elif date_param == "yesterday":
-            return f"{col}::DATE = (CURRENT_DATE - INTERVAL '1 day')", []
-        elif date_param in ("7days", "week"):
-            return f"{col}::DATE >= (CURRENT_DATE - INTERVAL '7 days')", []
-        elif date_param in ("30days", "month"):
-            return f"{col}::DATE >= (CURRENT_DATE - INTERVAL '30 days')", []
-        elif date_param == "all":
-            return "1=1", []
-        elif re.match(r"^\d{4}-\d{2}-\d{2}$", date_param):
-            return f"{col}::DATE = %s", [date_param]
-        else:
-            return f"{col}::DATE = CURRENT_DATE", []
+@app.route("/operator/complete/<int:token_id>", methods=["POST"])
+@login_required(role="operator")
+def operator_complete_token(token_id):
+    operator_id = session["user_id"]
 
-    # SQLite
-    if not date_param or date_param == "today":
-        return f"date({col}) = date('now')", []
-    elif date_param == "yesterday":
-        return f"date({col}) = date('now', '-1 day')", []
-    elif date_param in ("7days", "week"):
-        return f"date({col}) >= date('now', '-7 days')", []
-    elif date_param in ("30days", "month"):
-        return f"date({col}) >= date('now', '-30 days')", []
-    elif date_param == "all":
-        return "1=1", []
-    elif re.match(r"^\d{4}-\d{2}-\d{2}$", date_param):
-        return f"date({col}) = ?", [date_param]
-    else:
-        return f"date({col}) = date('now')", []
+    with QUEUE_LOCK:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            counter = get_operator_counter(c, operator_id)
+            if not counter:
+                flash("Unauthorized counter access.", "danger")
+                return redirect(url_for("operator_portal"))
 
+            # Verify token belongs to operator counter and is 'serving'
+            c.execute("SELECT * FROM tokens WHERE id = ? AND counter_id = ?", (token_id, counter["id"]))
+            token = c.fetchone()
+
+            if not token:
+                flash("Token not found.", "danger")
+                return redirect(url_for("operator_portal"))
+
+            if token["status"] != "serving":
+                flash("Only currently serving tokens can be marked completed.", "warning")
+                return redirect(url_for("operator_portal"))
+
+            c.execute("""
+                UPDATE tokens
+                SET status = 'served', completed_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'serving'
+            """, (token_id,))
+
+            # Notification for student
+            c.execute("""
+                INSERT INTO notifications (user_id, title, message)
+                VALUES (?, ?, ?)
+            """, (token["student_id"], "Service Completed", f"Service for Token #{token['token_number']} completed at {counter['name']}."))
+
+            # Audit log
+            c.execute("""
+                INSERT INTO audit_logs (action, user_id, user_role, details)
+                VALUES (?, ?, 'operator', ?)
+            """, ("COMPLETE_TOKEN", operator_id, f"Completed Token #{token['token_number']}"))
+
+            conn.commit()
+
+        broadcast_queue_update(counter["id"], "token_completed", {
+            "token_id": token["id"],
+            "token_number": token["token_number"]
+        })
+
+    flash(f"Token #{token['token_number']} marked as Completed.", "success")
+    return redirect(url_for("operator_portal"))
+
+
+@app.route("/operator/skip/<int:token_id>", methods=["POST"])
+@login_required(role="operator")
+def operator_skip_token(token_id):
+    operator_id = session["user_id"]
+
+    with QUEUE_LOCK:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            counter = get_operator_counter(c, operator_id)
+            if not counter:
+                flash("Unauthorized counter access.", "danger")
+                return redirect(url_for("operator_portal"))
+
+            c.execute("SELECT * FROM tokens WHERE id = ? AND counter_id = ?", (token_id, counter["id"]))
+            token = c.fetchone()
+
+            if not token or token["status"] != "serving":
+                flash("Only currently serving tokens can be skipped.", "warning")
+                return redirect(url_for("operator_portal"))
+
+            c.execute("UPDATE tokens SET status = 'skipped' WHERE id = ? AND status = 'serving'", (token_id,))
+
+            # Notification for student
+            c.execute("""
+                INSERT INTO notifications (user_id, title, message)
+                VALUES (?, ?, ?)
+            """, (token["student_id"], "Token Skipped", f"Token #{token['token_number']} was marked skipped due to no-show at {counter['name']}."))
+
+            # Audit log
+            c.execute("""
+                INSERT INTO audit_logs (action, user_id, user_role, details)
+                VALUES (?, ?, 'operator', ?)
+            """, ("SKIP_TOKEN", operator_id, f"Skipped Token #{token['token_number']}"))
+
+            conn.commit()
+
+        broadcast_queue_update(counter["id"], "token_skipped", {
+            "token_id": token["id"],
+            "token_number": token["token_number"]
+        })
+
+    flash(f"Token #{token['token_number']} has been skipped.", "warning")
+    return redirect(url_for("operator_portal"))
+
+
+@app.route("/operator/recall/<int:token_id>", methods=["POST"])
+@login_required(role="operator")
+def operator_recall_token(token_id):
+    operator_id = session["user_id"]
+
+    with QUEUE_LOCK:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            counter = get_operator_counter(c, operator_id)
+            if not counter:
+                flash("Unauthorized counter access.", "danger")
+                return redirect(url_for("operator_portal"))
+
+            # Check if already serving another token
+            c.execute("SELECT id, token_number FROM tokens WHERE counter_id = ? AND status = 'serving'", (counter["id"],))
+            if c.fetchone():
+                flash("Please complete or skip the current active token before recalling.", "warning")
+                return redirect(url_for("operator_portal"))
+
+            c.execute("SELECT * FROM tokens WHERE id = ? AND counter_id = ?", (token_id, counter["id"]))
+            token = c.fetchone()
+
+            if not token or token["status"] != "skipped":
+                flash("Only skipped tokens can be recalled.", "warning")
+                return redirect(url_for("operator_portal"))
+
+            c.execute("""
+                UPDATE tokens
+                SET status = 'serving', called_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'skipped'
+            """, (token_id,))
+
+            # Notification for student
+            c.execute("""
+                INSERT INTO notifications (user_id, title, message)
+                VALUES (?, ?, ?)
+            """, (token["student_id"], "Token Recalled!", f"Token #{token['token_number']} was recalled at {counter['name']}."))
+
+            # Audit log
+            c.execute("""
+                INSERT INTO audit_logs (action, user_id, user_role, details)
+                VALUES (?, ?, 'operator', ?)
+            """, ("RECALL_TOKEN", operator_id, f"Recalled Token #{token['token_number']}"))
+
+            conn.commit()
+
+        broadcast_queue_update(counter["id"], "token_recalled", {
+            "token_id": token["id"],
+            "token_number": token["token_number"]
+        })
+
+    flash(f"Recalled Token #{token['token_number']} back to Counter Desk.", "success")
+    return redirect(url_for("operator_portal"))
+
+
+@app.route("/operator/pause", methods=["POST"])
+@login_required(role="operator")
+def operator_pause_queue():
+    operator_id = session["user_id"]
+
+    with QUEUE_LOCK:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            counter = get_operator_counter(c, operator_id)
+            if not counter:
+                flash("Unauthorized counter access.", "danger")
+                return redirect(url_for("operator_portal"))
+
+            c.execute("UPDATE counters SET is_paused = 1 WHERE id = ?", (counter["id"],))
+            c.execute("""
+                INSERT INTO audit_logs (action, user_id, user_role, details)
+                VALUES ('PAUSE_QUEUE', ?, 'operator', ?)
+            """, (operator_id, f"Paused queue at Counter {counter['code']}"))
+            conn.commit()
+
+        broadcast_queue_update(counter["id"], "counter_status_changed", {"is_paused": 1, "is_active": counter["is_active"]})
+
+    flash("Queue has been paused temporarily.", "info")
+    return redirect(url_for("operator_portal"))
+
+
+@app.route("/operator/resume", methods=["POST"])
+@login_required(role="operator")
+def operator_resume_queue():
+    operator_id = session["user_id"]
+
+    with QUEUE_LOCK:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            counter = get_operator_counter(c, operator_id)
+            if not counter:
+                flash("Unauthorized counter access.", "danger")
+                return redirect(url_for("operator_portal"))
+
+            c.execute("UPDATE counters SET is_paused = 0 WHERE id = ?", (counter["id"],))
+            c.execute("""
+                INSERT INTO audit_logs (action, user_id, user_role, details)
+                VALUES ('RESUME_QUEUE', ?, 'operator', ?)
+            """, (operator_id, f"Resumed queue at Counter {counter['code']}"))
+            conn.commit()
+
+        broadcast_queue_update(counter["id"], "counter_status_changed", {"is_paused": 0, "is_active": counter["is_active"]})
+
+    flash("Queue operations resumed.", "success")
+    return redirect(url_for("operator_portal"))
+
+
+@app.route("/operator/toggle-counter", methods=["POST"])
+@login_required(role="operator")
+def operator_toggle_counter():
+    operator_id = session["user_id"]
+    action = request.form.get("action")  # 'open' or 'close'
+
+    with QUEUE_LOCK:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            counter = get_operator_counter(c, operator_id)
+            if not counter:
+                flash("Unauthorized counter access.", "danger")
+                return redirect(url_for("operator_portal"))
+
+            new_status = 1 if action == "open" else 0
+            c.execute("UPDATE counters SET is_active = ? WHERE id = ?", (new_status, counter["id"]))
+            c.execute("""
+                INSERT INTO audit_logs (action, user_id, user_role, details)
+                VALUES (?, ?, 'operator', ?)
+            """, (f"COUNTER_{action.upper()}", operator_id, f"Set Counter {counter['code']} status to {action}"))
+            conn.commit()
+
+        broadcast_queue_update(counter["id"], "counter_status_changed", {"is_paused": counter["is_paused"], "is_active": new_status})
+
+    flash(f"Counter {counter['name']} is now {'Open' if new_status else 'Closed'}.", "info")
+    return redirect(url_for("operator_portal"))
+
+
+@app.route("/operator/profile", methods=["GET", "POST"])
+@login_required(role="operator")
+def operator_profile():
+    operator_id = session["user_id"]
+
+    with db.get_db() as conn:
+        c = conn.cursor()
+
+        if request.method == "POST":
+            full_name = request.form.get("full_name", "").strip()
+            phone = request.form.get("phone", "").strip()
+
+            if not full_name:
+                flash("Name cannot be empty.", "danger")
+                return redirect(url_for("operator_profile"))
+
+            c.execute("UPDATE users SET full_name = ?, phone = ? WHERE id = ?", (full_name, phone, operator_id))
+            conn.commit()
+            session["user_name"] = full_name
+            flash("Profile updated successfully!", "success")
+            return redirect(url_for("operator_profile"))
+
+        c.execute("SELECT * FROM users WHERE id = ?", (operator_id,))
+        operator = c.fetchone()
+        counter = get_operator_counter(c, operator_id)
+
+    return render_template("operator_profile.html", operator=operator, counter=counter)
+
+
+@app.route("/operator/settings", methods=["GET", "POST"])
+@login_required(role="operator")
+def operator_settings():
+    operator_id = session["user_id"]
+
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "change_password":
+            current_pw = request.form.get("current_password", "").strip()
+            new_pw = request.form.get("new_password", "").strip()
+            confirm_pw = request.form.get("confirm_password", "").strip()
+
+            if not current_pw or not new_pw:
+                flash("Please fill out all password fields.", "danger")
+                return redirect(url_for("operator_settings"))
+
+            if new_pw != confirm_pw:
+                flash("New passwords do not match.", "danger")
+                return redirect(url_for("operator_settings"))
+
+            if len(new_pw) < 6:
+                flash("New password must be at least 6 characters.", "danger")
+                return redirect(url_for("operator_settings"))
+
+            with db.get_db() as conn:
+                c = conn.cursor()
+                c.execute("SELECT password_hash FROM users WHERE id = ?", (operator_id,))
+                user = c.fetchone()
+
+                if not check_password_hash(user["password_hash"], current_pw):
+                    flash("Current password incorrect.", "danger")
+                    return redirect(url_for("operator_settings"))
+
+                c.execute("UPDATE users SET password_hash = ? WHERE id = ?", (generate_password_hash(new_pw), operator_id))
+                conn.commit()
+
+            flash("Password updated successfully!", "success")
+            return redirect(url_for("operator_settings"))
+
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE id = ?", (operator_id,))
+        operator = c.fetchone()
+        counter = get_operator_counter(c, operator_id)
+
+    return render_template("operator_settings.html", operator=operator, counter=counter)
+
+
+# -------------------------------------------------------------
+# PHASE 5: COMPLETE ADMIN PORTAL
+# -------------------------------------------------------------
 
 @app.route("/admin")
-def admin_dashboard():
-    if not is_admin():
-        return redirect(url_for("admin_login"))
-    counters = get_all_counters(include_deactivated=True)
-    return render_template("admin_dashboard.html", counters=counters)
+@app.route("/admin/dashboard")
+@login_required(role="admin")
+def admin_portal():
+    with db.get_db() as conn:
+        c = conn.cursor()
 
+        # 1. User & Student Counts
+        c.execute("SELECT COUNT(*) as count FROM users WHERE role = 'student'")
+        total_students = c.fetchone()["count"]
 
-@app.route("/api/admin/overview")
-def api_admin_overview():
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
+        c.execute("SELECT COUNT(*) as count FROM users")
+        total_users = c.fetchone()["count"]
 
-    date_param = request.args.get("date", "today").strip()
-    date_clause, date_params = get_date_filter_clause(date_param, "created_at")
+        c.execute("SELECT COUNT(*) as count FROM users WHERE role = 'operator'")
+        total_operators = c.fetchone()["count"]
 
-    conn = get_db()
-    c = conn.cursor()
-
-    # Get all non-deleted counters from database
-    c.execute("SELECT * FROM counters WHERE status != 'deleted' ORDER BY id ASC")
-    db_counters = [dict(r) for r in c.fetchall()]
-
-    result_counters = []
-    for cdata in db_counters:
-        slug = cdata["slug"]
-        current_token = cdata["current_token"] or 0
-
-        # Waiting count right now
-        c.execute(
-            "SELECT COUNT(*) as cnt FROM tokens WHERE counter_slug = ? AND status = 'waiting'",
-            (slug,)
-        )
-        waiting_count = c.fetchone()["cnt"]
-
-        # Served in selected date range
-        sql_served = f"SELECT COUNT(*) as cnt FROM tokens WHERE counter_slug = ? AND status = 'served' AND {date_clause}"
-        c.execute(sql_served, [slug] + date_params)
-        served_count = c.fetchone()["cnt"]
-
-        # Skipped in selected date range
-        sql_skipped = f"SELECT COUNT(*) as cnt FROM tokens WHERE counter_slug = ? AND status = 'skipped' AND {date_clause}"
-        c.execute(sql_skipped, [slug] + date_params)
-        skipped_count = c.fetchone()["cnt"]
-
-        # Total tokens in period
-        sql_total = f"SELECT COUNT(*) as cnt FROM tokens WHERE counter_slug = ? AND {date_clause}"
-        c.execute(sql_total, [slug] + date_params)
-        total_tokens = c.fetchone()["cnt"]
-
-        # Assigned operators
+        # 2. Token Stats Today
         c.execute("""
-            SELECT u.full_name, op.employee_id
-            FROM operators op
-            JOIN users u ON u.id = op.user_id
-            WHERE op.assigned_counter_id = ? AND op.active = 1
-        """, (cdata["id"],))
-        assigned_ops = [dict(op_r) for op_r in c.fetchall()]
+            SELECT
+                COUNT(*) as total_today,
+                SUM(CASE WHEN status = 'waiting' THEN 1 ELSE 0 END) as waiting_count,
+                SUM(CASE WHEN status = 'serving' THEN 1 ELSE 0 END) as serving_count,
+                SUM(CASE WHEN status = 'served' THEN 1 ELSE 0 END) as served_count,
+                SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped_count,
+                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_count
+            FROM tokens
+            WHERE date(created_at) = date('now')
+        """)
+        token_stats = c.fetchone()
 
-        result_counters.append({
-            "id": cdata["id"],
-            "name": cdata["name"],
-            "slug": slug,
-            "current_token": current_token,
-            "status": cdata.get("status") or "open",
-            "location": cdata.get("location") or "Campus",
-            "description": cdata.get("description") or "",
-            "estimated_service_minutes": cdata.get("estimated_service_minutes") or 2,
-            "waiting_count": waiting_count,
-            "served_count": served_count,
-            "served_today": served_count,
-            "skipped_count": skipped_count,
-            "total_tokens": total_tokens,
-            "assigned_operators": assigned_ops
-        })
+        # 3. Counter Statuses
+        c.execute("""
+            SELECT
+                COUNT(*) as total_counters,
+                SUM(CASE WHEN is_active = 1 AND is_paused = 0 THEN 1 ELSE 0 END) as open_counters,
+                SUM(CASE WHEN is_active = 1 AND is_paused = 1 THEN 1 ELSE 0 END) as paused_counters,
+                SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END) as closed_counters
+            FROM counters
+        """)
+        counter_stats = c.fetchone()
 
-    # Global KPIs
-    c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'student'")
-    total_students = c.fetchone()["cnt"]
-    c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'student' AND status = 'active'")
-    active_students = c.fetchone()["cnt"]
+        # 4. Department-wise queue stats
+        c.execute("""
+            SELECT d.id, d.code, d.name, d.building_block, d.is_active,
+                   COUNT(DISTINCT c.id) as counter_count,
+                   SUM(CASE WHEN t.status = 'waiting' THEN 1 ELSE 0 END) as waiting_tokens,
+                   SUM(CASE WHEN t.status = 'served' AND date(t.created_at) = date('now') THEN 1 ELSE 0 END) as served_today
+            FROM departments d
+            LEFT JOIN counters c ON c.department_id = d.id
+            LEFT JOIN tokens t ON t.department_id = d.id
+            GROUP BY d.id, d.code, d.name, d.building_block, d.is_active
+            ORDER BY d.name
+        """)
+        dept_stats = c.fetchall()
 
-    c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'operator'")
-    total_employees = c.fetchone()["cnt"]
-    c.execute("SELECT COUNT(*) as cnt FROM operators WHERE active = 1")
-    active_employees = c.fetchone()["cnt"]
+        # 5. Daily Activity for Chart.js (Last 7 Days)
+        # Compatible across SQLite and PostgreSQL
+        if db.is_postgres():
+            date_sql = "TO_CHAR(created_at, 'YYYY-MM-DD')"
+        else:
+            date_sql = "date(created_at)"
 
-    c.execute("SELECT COUNT(*) as cnt FROM counters WHERE status != 'deleted'")
-    total_counters = c.fetchone()["cnt"]
-    c.execute("SELECT COUNT(*) as cnt FROM counters WHERE status = 'open'")
-    active_counters = c.fetchone()["cnt"]
+        c.execute(f"""
+            SELECT {date_sql} as day_date,
+                   COUNT(*) as generated_count,
+                   SUM(CASE WHEN status = 'served' THEN 1 ELSE 0 END) as completed_count
+            FROM tokens
+            GROUP BY {date_sql}
+            ORDER BY day_date DESC
+            LIMIT 7
+        """)
+        chart_rows = list(reversed(c.fetchall()))
 
-    # Token counts in period
-    c.execute(f"SELECT COUNT(*) as cnt FROM tokens WHERE {date_clause}", date_params)
-    total_tokens_period = c.fetchone()["cnt"]
+        chart_labels = [r["day_date"] for r in chart_rows] if chart_rows else [datetime.date.today().isoformat()]
+        chart_generated = [r["generated_count"] for r in chart_rows] if chart_rows else [token_stats["total_today"] or 0]
+        chart_completed = [r["completed_count"] for r in chart_rows] if chart_rows else [token_stats["served_count"] or 0]
 
-    c.execute(f"SELECT COUNT(*) as cnt FROM tokens WHERE status = 'waiting' AND {date_clause}", date_params)
-    waiting_tokens = c.fetchone()["cnt"]
+        # 6. Recent Audit Logs
+        c.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 8")
+        recent_audits = c.fetchall()
 
-    c.execute(f"SELECT COUNT(*) as cnt FROM tokens WHERE status = 'served' AND {date_clause}", date_params)
-    served_tokens = c.fetchone()["cnt"]
+    metrics = {
+        "total_students": total_students,
+        "total_users": total_users,
+        "total_operators": total_operators,
+        "tokens_today": token_stats["total_today"] or 0,
+        "waiting_tokens": token_stats["waiting_count"] or 0,
+        "serving_tokens": token_stats["serving_count"] or 0,
+        "served_tokens": token_stats["served_count"] or 0,
+        "skipped_tokens": token_stats["skipped_count"] or 0,
+        "cancelled_tokens": token_stats["cancelled_count"] or 0,
+        "total_counters": counter_stats["total_counters"] or 0,
+        "open_counters": counter_stats["open_counters"] or 0,
+        "paused_counters": counter_stats["paused_counters"] or 0,
+        "closed_counters": counter_stats["closed_counters"] or 0,
+    }
 
-    c.execute(f"SELECT COUNT(*) as cnt FROM tokens WHERE status = 'skipped' AND {date_clause}", date_params)
-    skipped_tokens = c.fetchone()["cnt"]
-
-    c.execute(f"SELECT COUNT(*) as cnt FROM tokens WHERE status = 'cancelled' AND {date_clause}", date_params)
-    cancelled_tokens = c.fetchone()["cnt"]
-
-    # Average wait time
-    if is_postgres():
-        c.execute(
-            f"""SELECT AVG(EXTRACT(EPOCH FROM (served_at - created_at)) / 60) as avg_wait
-                FROM tokens WHERE status = 'served' AND {date_clause}""",
-            date_params
-        )
-    else:
-        c.execute(
-            f"""SELECT AVG((julianday(served_at) - julianday(created_at)) * 24 * 60) as avg_wait
-                FROM tokens WHERE status = 'served' AND {date_clause}""",
-            date_params
-        )
-    avg_row = c.fetchone()
-    avg_wait = round(avg_row["avg_wait"], 1) if avg_row and avg_row["avg_wait"] else 0
-
-    # Pending complaints
-    c.execute("SELECT COUNT(*) as cnt FROM complaints WHERE status = 'pending'")
-    pending_complaints = c.fetchone()["cnt"]
-
-    conn.close()
-
-    return jsonify({
-        "counters": result_counters,
-        "kpis": {
-            "total_students": total_students,
-            "active_students": active_students,
-            "total_employees": total_employees,
-            "active_employees": active_employees,
-            "total_counters": total_counters,
-            "active_counters": active_counters,
-            "total_tokens_period": total_tokens_period,
-            "tokens_today": total_tokens_period,
-            "waiting_tokens": waiting_tokens,
-            "served_tokens": served_tokens,
-            "skipped_tokens": skipped_tokens,
-            "cancelled_tokens": cancelled_tokens,
-            "avg_wait": avg_wait,
-            "pending_complaints": pending_complaints,
-            "filter_date": date_param
-        }
-    })
-
-
-@app.route("/api/admin/analytics")
-def api_admin_analytics():
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    date_param = request.args.get("date", "today").strip()
-    date_clause, date_params = get_date_filter_clause(date_param, "created_at")
-
-    conn = get_db()
-    c = conn.cursor()
-
-    # Tokens per counter
-    sql_per_counter = f"""
-        SELECT co.id, co.name, co.slug,
-               (SELECT COUNT(*) FROM tokens t WHERE t.counter_slug = co.slug AND {date_clause}) as count
-        FROM counters co
-        WHERE co.status != 'deleted'
-        ORDER BY count DESC, co.id ASC
-    """
-    c.execute(sql_per_counter, date_params)
-    tokens_per_counter = [dict(r) for r in c.fetchall()]
-
-    # Peak hours
-    hr_expr = "TO_CHAR(created_at, 'HH24')" if is_postgres() else "strftime('%H', created_at)"
-    sql_peak = f"""
-        SELECT {hr_expr} as hr, COUNT(*) as cnt
-        FROM tokens
-        WHERE {date_clause}
-        GROUP BY hr
-        ORDER BY hr ASC
-    """
-    c.execute(sql_peak, date_params)
-    peak_rows = {int(r["hr"]): r["cnt"] for r in c.fetchall() if r["hr"] is not None}
-    peak_hours = []
-    for h in range(8, 19):
-        cnt = peak_rows.get(h, 0)
-        am_pm = "AM" if h < 12 else "PM"
-        display_h = h if h <= 12 else h - 12
-        if display_h == 0:
-            display_h = 12
-        peak_hours.append({
-            "hour": f"{display_h:02d}:00 {am_pm}",
-            "raw_hour": f"{h:02d}:00",
-            "count": cnt
-        })
-
-    # Status breakdown
-    sql_status = f"""
-        SELECT status, COUNT(*) as cnt
-        FROM tokens
-        WHERE {date_clause}
-        GROUP BY status
-    """
-    c.execute(sql_status, date_params)
-    status_map = {"waiting": 0, "served": 0, "skipped": 0, "cancelled": 0}
-    for r in c.fetchall():
-        if r["status"] in status_map:
-            status_map[r["status"]] = r["cnt"]
-
-    # Department-wise analytics
-    date_clause_dept, date_params_dept = get_date_filter_clause(date_param, col="t.created_at")
-    sql_dept = f"""
-        SELECT COALESCE(u.department, 'General Academic') as department,
-               COUNT(t.id) as token_count,
-               COUNT(DISTINCT t.user_id) as student_count
-        FROM tokens t
-        LEFT JOIN users u ON (t.user_id = u.id OR LOWER(t.roll_no) = LOWER(u.roll_no))
-        WHERE {date_clause_dept}
-        GROUP BY department
-        ORDER BY token_count DESC
-    """
-    c.execute(sql_dept, date_params_dept)
-    dept_rows = [dict(r) for r in c.fetchall()]
-
-    if not dept_rows:
-        c.execute("SELECT DISTINCT department FROM users WHERE role = 'student' AND department IS NOT NULL")
-        for r in c.fetchall():
-            dept_rows.append({"department": r["department"], "token_count": 0, "student_count": 0})
-
-    # Average wait time
-    avg_expr = "AVG(EXTRACT(EPOCH FROM (served_at - created_at)) / 60)" if is_postgres() else "AVG((julianday(served_at) - julianday(created_at)) * 24 * 60)"
-    sql_avg = f"""
-        SELECT {avg_expr} as avg_wait
-        FROM tokens
-        WHERE status = 'served' AND {date_clause}
-    """
-    c.execute(sql_avg, date_params)
-    avg_row = c.fetchone()
-    avg_wait = round(avg_row["avg_wait"], 1) if avg_row and avg_row["avg_wait"] else 0
-
-    # Total tokens in period
-    sql_total = f"SELECT COUNT(*) as cnt FROM tokens WHERE {date_clause}"
-    c.execute(sql_total, date_params)
-    total_period = c.fetchone()["cnt"]
-
-    # Busiest counter
-    busiest = max(tokens_per_counter, key=lambda x: x["count"]) if tokens_per_counter else None
-
-    # Peak hour summary
-    peak_active = max(peak_hours, key=lambda x: x["count"]) if peak_hours else None
-    if peak_active and peak_active["count"] > 0:
-        peak_summary = f"{peak_active['hour']} ({peak_active['count']} tokens)"
-    else:
-        peak_summary = "Normal Traffic"
-
-    conn.close()
-
-    return jsonify({
-        "tokens_per_counter": tokens_per_counter,
-        "peak_hours": peak_hours,
-        "peak_summary": peak_summary,
-        "status_distribution": status_map,
-        "department_analytics": dept_rows,
-        "avg_wait": avg_wait,
-        "total_today": total_period,
-        "total_period": total_period,
-        "busiest_counter": busiest["name"] if busiest and busiest["count"] > 0 else "N/A",
-        "filter_date": date_param
-    })
-
-
-@app.route("/api/admin/students")
-def api_admin_students():
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    query = request.args.get("q", "").strip()
-    dept = request.args.get("dept", "").strip()
-
-    conn = get_db()
-    c = conn.cursor()
-
-    sql = """
-        SELECT u.id, u.student_uid, u.roll_no, u.full_name, u.email, u.phone, 
-               u.department, u.semester, u.status, u.created_at,
-               (SELECT COUNT(*) FROM tokens WHERE user_id = u.id) as total_tokens,
-               (SELECT token_number FROM tokens WHERE user_id = u.id AND status = 'waiting' ORDER BY id DESC LIMIT 1) as active_token,
-               (SELECT counter_slug FROM tokens WHERE user_id = u.id AND status = 'waiting' ORDER BY id DESC LIMIT 1) as active_counter
-        FROM users u
-        WHERE u.role = 'student'
-    """
-    params = []
-    if dept and dept != "all":
-        sql += " AND u.department = ?"
-        params.append(dept)
-
-    if query:
-        escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        search_pattern = f"%{escaped_query}%"
-        sql += """ AND (
-            u.full_name LIKE ? ESCAPE '\\' 
-            OR u.student_uid LIKE ? ESCAPE '\\' 
-            OR u.roll_no LIKE ? ESCAPE '\\' 
-            OR u.email LIKE ? ESCAPE '\\' 
-            OR u.phone LIKE ? ESCAPE '\\'
-        )"""
-        params.extend([search_pattern] * 5)
-
-    sql += " ORDER BY u.student_uid ASC, u.id ASC"
-
-    c.execute(sql, params)
-    students = [dict(r) for r in c.fetchall()]
-
-    c.execute("SELECT DISTINCT department FROM users WHERE role = 'student' AND department IS NOT NULL ORDER BY department")
-    departments = [r["department"] for r in c.fetchall()]
-
-    conn.close()
-
-    return jsonify({
-        "students": students,
-        "total_count": len(students),
-        "departments": departments,
-        "college": PRIMARY_COLLEGE
-    })
-
-
-@app.route("/api/admin/student/<int:user_id>/tokens")
-def api_admin_student_tokens(user_id):
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id, student_uid, roll_no, full_name, email, phone, department, semester FROM users WHERE id = ?", (user_id,))
-    student = c.fetchone()
-    if not student:
-        conn.close()
-        return jsonify({"error": "Student not found"}), 404
-
-    c.execute("SELECT * FROM tokens WHERE user_id = ? ORDER BY id DESC", (user_id,))
-    tokens = [dict(r) for r in c.fetchall()]
-    for t in tokens:
-        t["counter_name"] = get_counter_name(t["counter_slug"])
-
-    conn.close()
-    return jsonify({
-        "student": dict(student),
-        "tokens": tokens
-    })
-
-
-@app.route("/api/admin/students/add", methods=["POST"])
-def api_admin_add_student():
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    full_name = request.form.get("full_name", "").strip()
-    roll_no = request.form.get("roll_no", "").strip()
-    department = request.form.get("department", "").strip() or "General"
-    semester = request.form.get("semester", "1st").strip()
-    student_uid = request.form.get("student_uid", "").strip().upper()
-    email = request.form.get("email", "").strip().lower()
-    phone = request.form.get("phone", "").strip()
-    password = request.form.get("password", "").strip() or "student123"
-
-    if not full_name or not roll_no:
-        return jsonify({"error": "Full Name and Roll Number are required"}), 400
-
-    clean_phone = re.sub(r"\D", "", phone) if phone else ""
-    if clean_phone and len(clean_phone) != 10:
-        return jsonify({"error": "Phone number must be 10 digits"}), 400
-
-    conn = get_db()
-    c = conn.cursor()
-
-    # Generate student_uid if not provided
-    if not student_uid:
-        c.execute("SELECT COUNT(*) as cnt FROM users WHERE role = 'student'")
-        seq = c.fetchone()["cnt"] + 1
-        dept_code = department[:2].upper() if len(department) >= 2 else "ST"
-        student_uid = f"AIT-24-{dept_code}{seq:03d}"
-
-    # Check for duplicate student_uid, roll_no, email, phone
-    c.execute(
-        """SELECT id FROM users WHERE UPPER(student_uid) = ? OR LOWER(roll_no) = ?
-           OR (LOWER(email) = ? AND ? != '') OR (phone = ? AND ? != '')""",
-        (student_uid.upper(), roll_no.lower(), email, email, clean_phone, clean_phone)
+    return render_template(
+        "admin_dashboard.html",
+        metrics=metrics,
+        dept_stats=dept_stats,
+        chart_labels=chart_labels,
+        chart_generated=chart_generated,
+        chart_completed=chart_completed,
+        recent_audits=recent_audits
     )
-    if c.fetchone():
-        conn.close()
-        return jsonify({"error": "A student with this Student ID, Roll No, Email, or Phone already exists."}), 400
 
-    db_email = email if email else f"{student_uid.lower().replace('-', '_')}@ait.edu"
-    db_phone = clean_phone if clean_phone else None
 
-    c.execute(
-        """INSERT INTO users
-           (college_id, student_uid, full_name, email, phone, password_hash, role, roll_no, department, semester, status)
-           VALUES (?, ?, ?, ?, ?, ?, 'student', ?, ?, ?, 'active')""",
-        (1, student_uid, full_name, db_email, db_phone, generate_password_hash(password), roll_no, department, semester)
+# -------------------------------------------------------------
+# ADMIN DEPARTMENT MANAGEMENT
+# -------------------------------------------------------------
+
+@app.route("/admin/departments")
+@login_required(role="admin")
+def admin_departments():
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT d.*,
+                   COUNT(DISTINCT c.id) as counter_count,
+                   (SELECT COUNT(*) FROM tokens t WHERE t.department_id = d.id) as total_tokens
+            FROM departments d
+            LEFT JOIN counters c ON c.department_id = d.id
+            GROUP BY d.id
+            ORDER BY d.name
+        """)
+        departments = c.fetchall()
+    return render_template("admin_departments.html", departments=departments)
+
+
+@app.route("/admin/departments/create", methods=["POST"])
+@login_required(role="admin")
+def admin_department_create():
+    code = request.form.get("code", "").strip().upper()
+    name = request.form.get("name", "").strip()
+    description = request.form.get("description", "").strip()
+    building_block = request.form.get("building_block", "Block 1").strip()
+
+    if not code or not name:
+        flash("Department code and name are required.", "danger")
+        return redirect(url_for("admin_departments"))
+
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM departments WHERE code = ?", (code,))
+        if c.fetchone():
+            flash("Department with this code already exists.", "danger")
+            return redirect(url_for("admin_departments"))
+
+        c.execute("""
+            INSERT INTO departments (code, name, description, building_block, is_active)
+            VALUES (?, ?, ?, ?, 1)
+        """, (code, name, description, building_block))
+        
+        c.execute("""
+            INSERT INTO audit_logs (action, user_id, user_role, details)
+            VALUES ('CREATE_DEPARTMENT', ?, 'admin', ?)
+        """, (session["user_id"], f"Created department {name} ({code})"))
+        conn.commit()
+
+    flash(f"Department '{name}' created successfully.", "success")
+    return redirect(url_for("admin_departments"))
+
+
+@app.route("/admin/departments/edit/<int:dept_id>", methods=["POST"])
+@login_required(role="admin")
+def admin_department_edit(dept_id):
+    name = request.form.get("name", "").strip()
+    description = request.form.get("description", "").strip()
+    building_block = request.form.get("building_block", "Block 1").strip()
+    is_active = int(request.form.get("is_active", 1))
+
+    if not name:
+        flash("Department name cannot be empty.", "danger")
+        return redirect(url_for("admin_departments"))
+
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            UPDATE departments
+            SET name = ?, description = ?, building_block = ?, is_active = ?
+            WHERE id = ?
+        """, (name, description, building_block, is_active, dept_id))
+
+        c.execute("""
+            INSERT INTO audit_logs (action, user_id, user_role, details)
+            VALUES ('EDIT_DEPARTMENT', ?, 'admin', ?)
+        """, (session["user_id"], f"Updated department ID {dept_id} ({name})"))
+        conn.commit()
+
+    flash("Department updated successfully.", "success")
+    return redirect(url_for("admin_departments"))
+
+
+@app.route("/admin/departments/toggle/<int:dept_id>", methods=["POST"])
+@login_required(role="admin")
+def admin_department_toggle(dept_id):
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT name, is_active FROM departments WHERE id = ?", (dept_id,))
+        dept = c.fetchone()
+        if not dept:
+            flash("Department not found.", "danger")
+            return redirect(url_for("admin_departments"))
+
+        new_status = 0 if (dept["is_active"] if "is_active" in dept else 1) else 1
+        c.execute("UPDATE departments SET is_active = ? WHERE id = ?", (new_status, dept_id))
+        c.execute("""
+            INSERT INTO audit_logs (action, user_id, user_role, details)
+            VALUES ('TOGGLE_DEPARTMENT', ?, 'admin', ?)
+        """, (session["user_id"], f"Toggled department {dept['name']} active state to {new_status}"))
+        conn.commit()
+
+    flash(f"Department '{dept['name']}' status changed.", "info")
+    return redirect(url_for("admin_departments"))
+
+
+# -------------------------------------------------------------
+# ADMIN COUNTER MANAGEMENT
+# -------------------------------------------------------------
+
+@app.route("/admin/counters")
+@login_required(role="admin")
+def admin_counters():
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT c.*, d.name as department_name, d.code as department_code,
+                   u.full_name as operator_name, u.identifier as operator_identifier,
+                   (SELECT COUNT(*) FROM tokens t WHERE t.counter_id = c.id AND t.status = 'waiting') as waiting_count,
+                   (SELECT token_number FROM tokens t WHERE t.counter_id = c.id AND t.status = 'serving' LIMIT 1) as now_serving
+            FROM counters c
+            JOIN departments d ON d.id = c.department_id
+            LEFT JOIN users u ON u.id = c.assigned_operator_id
+            ORDER BY d.name, c.name
+        """)
+        counters = c.fetchall()
+
+        c.execute("SELECT id, code, name FROM departments WHERE is_active = 1 ORDER BY name")
+        departments = c.fetchall()
+
+        c.execute("SELECT id, full_name, identifier FROM users WHERE role = 'operator' ORDER BY full_name")
+        operators = c.fetchall()
+
+    return render_template(
+        "admin_counters.html",
+        counters=counters,
+        departments=departments,
+        operators=operators
     )
-    conn.commit()
-    new_id = c.lastrowid
-    conn.close()
-
-    return jsonify({
-        "success": True,
-        "message": f"Student '{full_name}' ({student_uid}) added successfully.",
-        "student": {
-            "id": new_id,
-            "student_uid": student_uid,
-            "full_name": full_name,
-            "roll_no": roll_no,
-            "department": department,
-            "semester": semester,
-            "email": db_email,
-            "phone": db_phone or "-"
-        }
-    })
 
 
-@app.route("/api/admin/students/<int:user_id>/delete", methods=["POST"])
-def api_admin_delete_student(user_id):
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
+@app.route("/admin/counters/create", methods=["POST"])
+@login_required(role="admin")
+def admin_counter_create():
+    name = request.form.get("name", "").strip()
+    code = request.form.get("code", "").strip().upper()
+    department_id = request.form.get("department_id")
+    avg_service_time = int(request.form.get("avg_service_time_mins", 8))
+    operator_id = request.form.get("operator_id") or None
 
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id, full_name, student_uid, role FROM users WHERE id = ?", (user_id,))
-    target = c.fetchone()
-    if not target:
-        conn.close()
-        return jsonify({"error": "Student not found"}), 404
+    if not name or not code or not department_id:
+        flash("Counter name, code, and department are required.", "danger")
+        return redirect(url_for("admin_counters"))
 
-    if target["role"] != "student":
-        conn.close()
-        return jsonify({"error": "Cannot delete non-student account via this endpoint"}), 400
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM counters WHERE code = ?", (code,))
+        if c.fetchone():
+            flash("Counter with this code already exists.", "danger")
+            return redirect(url_for("admin_counters"))
 
-    c.execute("DELETE FROM tokens WHERE user_id = ?", (user_id,))
-    c.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    conn.commit()
-    conn.close()
+        # If operator selected, clear previous assignment for that operator
+        if operator_id:
+            c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ?", (operator_id,))
 
-    return jsonify({
-        "success": True,
-        "message": f"Student '{target['full_name']}' ({target['student_uid'] or target['id']}) has been removed."
-    })
+        c.execute("""
+            INSERT INTO counters (department_id, name, code, is_active, is_paused, assigned_operator_id, avg_service_time_mins)
+            VALUES (?, ?, ?, 1, 0, ?, ?)
+        """, (department_id, name, code, operator_id, avg_service_time))
 
+        c.execute("""
+            INSERT INTO audit_logs (action, user_id, user_role, details)
+            VALUES ('CREATE_COUNTER', ?, 'admin', ?)
+        """, (session["user_id"], f"Created counter {name} ({code})"))
+        conn.commit()
 
-@app.route("/api/admin/employees")
-def api_admin_employees():
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        SELECT u.id as user_id, u.full_name, u.email, u.phone, u.status, u.created_at,
-               op.id as operator_id, op.employee_id, op.active,
-               co.name as counter_name, co.slug as counter_slug,
-               (SELECT COUNT(*) FROM tokens WHERE completed_by = u.id AND date(created_at) = date('now')) as served_today
-        FROM users u
-        LEFT JOIN operators op ON op.user_id = u.id
-        LEFT JOIN counters co ON co.id = op.assigned_counter_id
-        WHERE u.role = 'operator'
-        ORDER BY u.id ASC
-    """)
-    employees = [dict(r) for r in c.fetchall()]
-    conn.close()
-
-    return jsonify({"employees": employees, "counters": COUNTERS})
+    flash(f"Counter '{name}' added successfully.", "success")
+    return redirect(url_for("admin_counters"))
 
 
-@app.route("/api/admin/employees/add", methods=["POST"])
-def api_admin_add_employee():
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
+@app.route("/admin/counters/edit/<int:counter_id>", methods=["POST"])
+@login_required(role="admin")
+def admin_counter_edit(counter_id):
+    name = request.form.get("name", "").strip()
+    avg_service_time = int(request.form.get("avg_service_time_mins", 8))
+    department_id = request.form.get("department_id")
+    operator_id = request.form.get("operator_id") or None
 
+    if not name or not department_id:
+        flash("Counter name and department are required.", "danger")
+        return redirect(url_for("admin_counters"))
+
+    with db.get_db() as conn:
+        c = conn.cursor()
+
+        if operator_id:
+            # Reassign: unassign from previous counter if any
+            c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ? AND id != ?", (operator_id, counter_id))
+
+        c.execute("""
+            UPDATE counters
+            SET name = ?, avg_service_time_mins = ?, department_id = ?, assigned_operator_id = ?
+            WHERE id = ?
+        """, (name, avg_service_time, department_id, operator_id, counter_id))
+
+        c.execute("""
+            INSERT INTO audit_logs (action, user_id, user_role, details)
+            VALUES ('EDIT_COUNTER', ?, 'admin', ?)
+        """, (session["user_id"], f"Updated counter ID {counter_id} ({name})"))
+        conn.commit()
+
+    flash("Counter updated successfully.", "success")
+    return redirect(url_for("admin_counters"))
+
+
+@app.route("/admin/counters/action/<int:counter_id>", methods=["POST"])
+@login_required(role="admin")
+def admin_counter_action(counter_id):
+    action = request.form.get("action")  # 'open', 'close', 'pause', 'resume'
+
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT name, code FROM counters WHERE id = ?", (counter_id,))
+        counter = c.fetchone()
+        if not counter:
+            flash("Counter not found.", "danger")
+            return redirect(url_for("admin_counters"))
+
+        if action == "open":
+            c.execute("UPDATE counters SET is_active = 1 WHERE id = ?", (counter_id,))
+        elif action == "close":
+            c.execute("UPDATE counters SET is_active = 0 WHERE id = ?", (counter_id,))
+        elif action == "pause":
+            c.execute("UPDATE counters SET is_paused = 1 WHERE id = ?", (counter_id,))
+        elif action == "resume":
+            c.execute("UPDATE counters SET is_paused = 0 WHERE id = ?", (counter_id,))
+
+        c.execute("""
+            INSERT INTO audit_logs (action, user_id, user_role, details)
+            VALUES (?, ?, 'admin', ?)
+        """, (f"ADMIN_COUNTER_{action.upper()}", session["user_id"], f"Admin set Counter {counter['code']} to {action}"))
+        conn.commit()
+
+    flash(f"Counter {counter['name']} is now updated ({action}).", "info")
+    return redirect(url_for("admin_counters"))
+
+
+# -------------------------------------------------------------
+# ADMIN OPERATOR MANAGEMENT
+# -------------------------------------------------------------
+
+@app.route("/admin/operators")
+@login_required(role="admin")
+def admin_operators():
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT u.*, c.name as assigned_counter_name, c.code as assigned_counter_code, c.id as assigned_counter_id,
+                   d.name as department_name
+            FROM users u
+            LEFT JOIN counters c ON c.assigned_operator_id = u.id
+            LEFT JOIN departments d ON d.id = c.department_id
+            WHERE u.role = 'operator'
+            ORDER BY u.full_name
+        """)
+        operators = c.fetchall()
+
+        c.execute("""
+            SELECT c.id, c.name, c.code, d.name as dept_name
+            FROM counters c
+            JOIN departments d ON d.id = c.department_id
+            ORDER BY d.name, c.name
+        """)
+        counters = c.fetchall()
+
+    return render_template("admin_operators.html", operators=operators, counters=counters)
+
+
+@app.route("/admin/operators/create", methods=["POST"])
+@login_required(role="admin")
+def admin_operator_create():
     full_name = request.form.get("full_name", "").strip()
-    employee_id = request.form.get("employee_id", "").strip().upper()
-    assigned_counter = request.form.get("assigned_counter", "").strip()
+    identifier = request.form.get("identifier", "").strip().upper()
     email = request.form.get("email", "").strip().lower()
     phone = request.form.get("phone", "").strip()
     password = request.form.get("password", "").strip()
+    counter_id = request.form.get("counter_id") or None
 
-    if not full_name or not employee_id or not password:
-        return jsonify({"error": "Full Name, Employee ID, and Password are required."}), 400
+    if not all([full_name, identifier, email, password]):
+        flash("Full name, employee ID, email, and password are required.", "danger")
+        return redirect(url_for("admin_operators"))
 
     if len(password) < 6:
-        return jsonify({"error": "Password must be at least 6 characters."}), 400
+        flash("Password must be at least 6 characters.", "danger")
+        return redirect(url_for("admin_operators"))
 
-    clean_phone = re.sub(r"\D", "", phone) if phone else ""
-    if clean_phone and len(clean_phone) != 10:
-        return jsonify({"error": "Mobile number must be 10 digits."}), 400
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM users WHERE email = ? OR identifier = ?", (email, identifier))
+        if c.fetchone():
+            flash("User with this email or employee ID already exists.", "danger")
+            return redirect(url_for("admin_operators"))
 
-    conn = get_db()
-    c = conn.cursor()
-
-    c.execute("SELECT id FROM operators WHERE employee_id = ?", (employee_id,))
-    if c.fetchone():
-        conn.close()
-        return jsonify({"error": f"An employee with ID '{employee_id}' already exists."}), 400
-
-    db_email = email if email else f"staff_{employee_id.lower().replace('-', '_')}@queuex.internal"
-    c.execute("SELECT id FROM users WHERE LOWER(email) = ?", (db_email,))
-    if c.fetchone():
-        conn.close()
-        return jsonify({"error": "An account with this email already exists."}), 400
-
-    counter_id = None
-    if assigned_counter:
-        c.execute("SELECT id FROM counters WHERE slug = ?", (assigned_counter,))
-        crow = c.fetchone()
-        if crow:
-            counter_id = crow["id"]
-
-    c.execute(
-        """INSERT INTO users
-           (college_id, full_name, email, phone, password_hash, role, status)
-           VALUES (?, ?, ?, ?, ?, 'operator', 'active')""",
-        (1, full_name, db_email, clean_phone or None, generate_password_hash(password))
-    )
-    user_id = c.lastrowid
-
-    c.execute(
-        """INSERT INTO operators
-           (user_id, employee_id, assigned_counter_id, active)
-           VALUES (?, ?, ?, 1)""",
-        (user_id, employee_id, counter_id)
-    )
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "success": True,
-        "message": f"Operator '{full_name}' ({employee_id}) created successfully."
-    })
-
-
-@app.route("/api/admin/employees/<int:user_id>/delete", methods=["POST"])
-def api_admin_delete_employee(user_id):
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id, full_name, role, email FROM users WHERE id = ?", (user_id,))
-    target = c.fetchone()
-    if not target:
-        conn.close()
-        return jsonify({"error": "Employee not found"}), 404
-
-    if target["role"] != "operator":
-        conn.close()
-        return jsonify({"error": "Cannot delete non-operator staff via this endpoint"}), 400
-
-    c.execute("DELETE FROM operators WHERE user_id = ?", (user_id,))
-    c.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "success": True,
-        "message": f"Operator '{target['full_name']}' has been removed."
-    })
-
-
-
-# ---------- ADMIN COUNTERS MANAGEMENT ----------
-
-@app.route("/api/admin/counters")
-def api_admin_counters():
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        SELECT co.*,
-               (SELECT COUNT(*) FROM tokens WHERE counter_slug = co.slug AND status = 'waiting') as waiting_count,
-               (SELECT COUNT(*) FROM tokens WHERE counter_slug = co.slug AND status = 'served' AND date(created_at) = date('now')) as served_today,
-               (SELECT COUNT(*) FROM tokens WHERE counter_slug = co.slug) as total_tokens
-        FROM counters co
-        WHERE co.status != 'deleted'
-        ORDER BY co.id ASC
-    """)
-    counters_list = []
-    for r in c.fetchall():
-        item = dict(r)
+        pw_hash = generate_password_hash(password)
         c.execute("""
-            SELECT u.full_name, op.employee_id
-            FROM operators op
-            JOIN users u ON u.id = op.user_id
-            WHERE op.assigned_counter_id = ? AND op.active = 1
-        """, (item["id"],))
-        item["assigned_operators"] = [dict(op_r) for op_r in c.fetchall()]
-        counters_list.append(item)
-    conn.close()
-    return jsonify({"counters": counters_list, "total_count": len(counters_list)})
+            INSERT INTO users (email, password_hash, full_name, role, identifier, phone, is_active)
+            VALUES (?, ?, ?, 'operator', ?, ?, 1)
+        """, (email, pw_hash, full_name, identifier, phone))
+        op_id = c.lastrowid
+
+        if counter_id:
+            c.execute("UPDATE counters SET assigned_operator_id = ? WHERE id = ?", (op_id, counter_id))
+
+        c.execute("""
+            INSERT INTO audit_logs (action, user_id, user_role, details)
+            VALUES ('CREATE_OPERATOR', ?, 'admin', ?)
+        """, (session["user_id"], f"Created operator {full_name} ({identifier})"))
+        conn.commit()
+
+    flash(f"Operator account created for {full_name}.", "success")
+    return redirect(url_for("admin_operators"))
 
 
-@app.route("/api/admin/counters/add", methods=["POST"])
-def api_admin_add_counter():
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
+@app.route("/admin/operators/assign/<int:operator_id>", methods=["POST"])
+@login_required(role="admin")
+def admin_operator_assign(operator_id):
+    counter_id = request.form.get("counter_id")  # Can be empty for unassign
 
-    payload = request.get_json(silent=True) or request.form
-    name = (payload.get("name") or "").strip()
-    slug = (payload.get("slug") or "").strip()
-    location = (payload.get("location") or "").strip()
-    description = (payload.get("description") or "").strip()
-    operating_hours = (payload.get("operating_hours") or "09:00 AM - 05:00 PM").strip()
-    est_minutes = int(payload.get("estimated_service_minutes") or 2)
+    with db.get_db() as conn:
+        c = conn.cursor()
 
-    if not name:
-        return jsonify({"error": "Counter name is required"}), 400
+        # Unassign operator from any existing desk
+        c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ?", (operator_id,))
 
-    if not slug:
-        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        if counter_id:
+            c.execute("UPDATE counters SET assigned_operator_id = ? WHERE id = ?", (operator_id, counter_id))
 
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id FROM counters WHERE slug = ? OR LOWER(name) = ?", (slug, name.lower()))
-    if c.fetchone():
-        conn.close()
-        return jsonify({"error": f"A counter with name '{name}' or slug '{slug}' already exists."}), 400
+        c.execute("""
+            INSERT INTO audit_logs (action, user_id, user_role, details)
+            VALUES ('REASSIGN_OPERATOR', ?, 'admin', ?)
+        """, (session["user_id"], f"Reassigned operator ID {operator_id} to counter ID {counter_id}"))
+        conn.commit()
 
-    c.execute("""
-        INSERT INTO counters (name, slug, current_token, location, description, operating_hours, estimated_service_minutes, status)
-        VALUES (?, ?, 0, ?, ?, ?, ?, 'open')
-    """, (name, slug, location, description, operating_hours, est_minutes))
-    conn.commit()
-    new_id = c.lastrowid
-    conn.close()
+    flash("Operator desk assignment updated.", "success")
+    return redirect(url_for("admin_operators"))
 
-    return jsonify({
-        "success": True,
-        "message": f"Counter '{name}' added successfully.",
-        "counter_id": new_id,
-        "counter": {
-            "id": new_id,
-            "name": name,
-            "slug": slug,
-            "location": location,
-            "status": "open"
+
+@app.route("/admin/operators/toggle/<int:operator_id>", methods=["POST"])
+@login_required(role="admin")
+def admin_operator_toggle(operator_id):
+    with db.get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT full_name, is_active FROM users WHERE id = ? AND role = 'operator'", (operator_id,))
+        op = c.fetchone()
+        if not op:
+            flash("Operator not found.", "danger")
+            return redirect(url_for("admin_operators"))
+
+        new_status = 0 if (op["is_active"] if "is_active" in op else 1) else 1
+        c.execute("UPDATE users SET is_active = ? WHERE id = ?", (new_status, operator_id))
+
+        # If deactivating, clear counter assignment
+        if new_status == 0:
+            c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ?", (operator_id,))
+
+        c.execute("""
+            INSERT INTO audit_logs (action, user_id, user_role, details)
+            VALUES ('TOGGLE_OPERATOR_STATUS', ?, 'admin', ?)
+        """, (session["user_id"], f"Set operator {op['full_name']} active state to {new_status}"))
+        conn.commit()
+
+    flash(f"Operator {op['full_name']} account status changed.", "info")
+    return redirect(url_for("admin_operators"))
+
+
+# -------------------------------------------------------------
+# ADMIN DAILY REPORTS, ANALYTICS & CSV EXPORT
+# -------------------------------------------------------------
+
+@app.route("/admin/reports")
+@login_required(role="admin")
+def admin_reports():
+    selected_date = request.args.get("date", datetime.date.today().isoformat())
+    selected_dept = request.args.get("department_id", "all")
+
+    with db.get_db() as conn:
+        c = conn.cursor()
+
+        # Build parameterized query for filtering
+        query = """
+            SELECT t.*, c.name as counter_name, c.code as counter_code,
+                   d.name as department_name, d.code as department_code
+            FROM tokens t
+            JOIN counters c ON c.id = t.counter_id
+            JOIN departments d ON d.id = t.department_id
+            WHERE date(t.created_at) = ?
+        """
+        params = [selected_date]
+
+        if selected_dept != "all":
+            query += " AND t.department_id = ?"
+            params.append(int(selected_dept))
+
+        query += " ORDER BY t.id DESC"
+        c.execute(query, tuple(params))
+        tokens = c.fetchall()
+
+        # Aggregate metrics for the selected filter
+        total_tokens = len(tokens)
+        completed = sum(1 for t in tokens if t["status"] == "served")
+        skipped = sum(1 for t in tokens if t["status"] == "skipped")
+        cancelled = sum(1 for t in tokens if t["status"] == "cancelled")
+        waiting = sum(1 for t in tokens if t["status"] == "waiting")
+
+        # Department list for dropdown
+        c.execute("SELECT id, code, name FROM departments ORDER BY name")
+        departments = c.fetchall()
+
+    return render_template(
+        "admin_reports.html",
+        tokens=tokens,
+        selected_date=selected_date,
+        selected_dept=selected_dept,
+        departments=departments,
+        summary={
+            "total": total_tokens,
+            "completed": completed,
+            "skipped": skipped,
+            "cancelled": cancelled,
+            "waiting": waiting
         }
-    })
-
-
-@app.route("/api/admin/counters/<int:counter_id>/edit", methods=["POST"])
-def api_admin_edit_counter(counter_id):
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(silent=True) or request.form
-    name = (payload.get("name") or "").strip()
-    location = (payload.get("location") or "").strip()
-    description = (payload.get("description") or "").strip()
-    operating_hours = (payload.get("operating_hours") or "").strip()
-    est_minutes = payload.get("estimated_service_minutes")
-
-    if not name:
-        return jsonify({"error": "Counter name cannot be empty"}), 400
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id, slug FROM counters WHERE id = ?", (counter_id,))
-    target = c.fetchone()
-    if not target:
-        conn.close()
-        return jsonify({"error": "Counter not found"}), 404
-
-    c.execute("SELECT id FROM counters WHERE LOWER(name) = ? AND id != ?", (name.lower(), counter_id))
-    if c.fetchone():
-        conn.close()
-        return jsonify({"error": f"Another counter with name '{name}' already exists."}), 400
-
-    c.execute("""
-        UPDATE counters
-        SET name = ?, location = ?, description = ?,
-            operating_hours = COALESCE(NULLIF(?, ''), operating_hours),
-            estimated_service_minutes = COALESCE(?, estimated_service_minutes)
-        WHERE id = ?
-    """, (name, location, description, operating_hours, est_minutes, counter_id))
-    conn.commit()
-    conn.close()
-
-    return jsonify({"success": True, "message": f"Counter '{name}' updated successfully."})
-
-
-@app.route("/api/admin/counters/<int:counter_id>/toggle-status", methods=["POST"])
-def api_admin_toggle_counter_status(counter_id):
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(silent=True) or request.form
-    new_status = (payload.get("status") or "").strip().lower()
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id, name, slug, status FROM counters WHERE id = ?", (counter_id,))
-    target = c.fetchone()
-    if not target:
-        conn.close()
-        return jsonify({"error": "Counter not found"}), 404
-
-    if not new_status:
-        new_status = "deactivated" if target["status"] != "deactivated" else "open"
-
-    if new_status not in ("open", "paused", "closed", "deactivated"):
-        conn.close()
-        return jsonify({"error": "Invalid status value"}), 400
-
-    c.execute("UPDATE counters SET status = ? WHERE id = ?", (new_status, counter_id))
-    conn.commit()
-    conn.close()
-
-    broadcast_queue_update(target["slug"])
-
-    return jsonify({
-        "success": True,
-        "message": f"Counter '{target['name']}' status set to {new_status.upper()}.",
-        "status": new_status,
-        "counter_id": counter_id
-    })
-
-
-@app.route("/api/admin/counters/<int:counter_id>/delete", methods=["POST"])
-def api_admin_delete_counter(counter_id):
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id, name, slug FROM counters WHERE id = ?", (counter_id,))
-    target = c.fetchone()
-    if not target:
-        conn.close()
-        return jsonify({"error": "Counter not found"}), 404
-
-    c.execute("UPDATE counters SET status = 'deleted' WHERE id = ?", (counter_id,))
-    c.execute("UPDATE operators SET assigned_counter_id = NULL WHERE assigned_counter_id = ?", (counter_id,))
-    conn.commit()
-    conn.close()
-
-    return jsonify({"success": True, "message": f"Counter '{target['name']}' removed."})
-
-
-# ---------- ADMIN STUDENTS & OPERATORS EXTENSIONS ----------
-
-@app.route("/api/admin/students/<int:user_id>/edit", methods=["POST"])
-def api_admin_edit_student(user_id):
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(silent=True) or request.form
-    full_name = (payload.get("full_name") or "").strip()
-    roll_no = (payload.get("roll_no") or "").strip()
-    department = (payload.get("department") or "").strip()
-    semester = (payload.get("semester") or "").strip()
-    phone = (payload.get("phone") or "").strip()
-    email = (payload.get("email") or "").strip().lower()
-
-    if not full_name or not roll_no:
-        return jsonify({"error": "Full Name and Roll Number are required."}), 400
-
-    clean_phone = re.sub(r"\D", "", phone) if phone else None
-    if clean_phone and len(clean_phone) != 10:
-        return jsonify({"error": "Phone number must be 10 digits."}), 400
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id FROM users WHERE id = ? AND role = 'student'", (user_id,))
-    if not c.fetchone():
-        conn.close()
-        return jsonify({"error": "Student not found"}), 404
-
-    c.execute("SELECT id FROM users WHERE LOWER(roll_no) = ? AND id != ?", (roll_no.lower(), user_id))
-    if c.fetchone():
-        conn.close()
-        return jsonify({"error": f"Another student with Roll No '{roll_no}' already exists."}), 400
-
-    c.execute("""
-        UPDATE users
-        SET full_name = ?, roll_no = ?, department = COALESCE(NULLIF(?, ''), department),
-            semester = COALESCE(NULLIF(?, ''), semester),
-            phone = COALESCE(?, phone),
-            email = COALESCE(NULLIF(?, ''), email),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-    """, (full_name, roll_no, department, semester, clean_phone, email, user_id))
-    conn.commit()
-    conn.close()
-
-    return jsonify({"success": True, "message": f"Student '{full_name}' updated successfully."})
-
-
-@app.route("/api/admin/students/<int:user_id>/toggle-status", methods=["POST"])
-def api_admin_toggle_student_status(user_id):
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id, full_name, status FROM users WHERE id = ? AND role = 'student'", (user_id,))
-    target = c.fetchone()
-    if not target:
-        conn.close()
-        return jsonify({"error": "Student not found"}), 404
-
-    new_status = "deactivated" if target["status"] == "active" else "active"
-    c.execute("UPDATE users SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (new_status, user_id))
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "success": True,
-        "message": f"Student '{target['full_name']}' is now {new_status}.",
-        "status": new_status
-    })
-
-
-@app.route("/api/admin/employees/<int:user_id>/edit", methods=["POST"])
-def api_admin_edit_employee(user_id):
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(silent=True) or request.form
-    full_name = (payload.get("full_name") or "").strip()
-    employee_id = (payload.get("employee_id") or "").strip().upper()
-    assigned_counter = (payload.get("assigned_counter") or "").strip()
-    phone = (payload.get("phone") or "").strip()
-    email = (payload.get("email") or "").strip().lower()
-
-    if not full_name:
-        return jsonify({"error": "Full Name is required."}), 400
-
-    clean_phone = re.sub(r"\D", "", phone) if phone else None
-    if clean_phone and len(clean_phone) != 10:
-        return jsonify({"error": "Phone number must be 10 digits."}), 400
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id FROM users WHERE id = ? AND role = 'operator'", (user_id,))
-    if not c.fetchone():
-        conn.close()
-        return jsonify({"error": "Employee not found"}), 404
-
-    counter_id = None
-    if assigned_counter:
-        c.execute("SELECT id FROM counters WHERE slug = ?", (assigned_counter,))
-        crow = c.fetchone()
-        if crow:
-            counter_id = crow["id"]
-
-    c.execute("""
-        UPDATE users
-        SET full_name = ?, phone = COALESCE(?, phone), email = COALESCE(NULLIF(?, ''), email),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-    """, (full_name, clean_phone, email, user_id))
-
-    if employee_id:
-        c.execute("""
-            UPDATE operators
-            SET employee_id = ?, assigned_counter_id = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ?
-        """, (employee_id, counter_id, user_id))
-    else:
-        c.execute("""
-            UPDATE operators
-            SET assigned_counter_id = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ?
-        """, (counter_id, user_id))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({"success": True, "message": f"Operator '{full_name}' updated successfully."})
-
-
-@app.route("/api/admin/employees/<int:user_id>/toggle-status", methods=["POST"])
-def api_admin_toggle_employee_status(user_id):
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        SELECT u.id, u.full_name, u.status as user_status, op.active as op_active
-        FROM users u
-        LEFT JOIN operators op ON op.user_id = u.id
-        WHERE u.id = ? AND u.role = 'operator'
-    """, (user_id,))
-    target = c.fetchone()
-    if not target:
-        conn.close()
-        return jsonify({"error": "Employee not found"}), 404
-
-    new_active = 0 if target["op_active"] == 1 else 1
-    new_user_status = "active" if new_active == 1 else "deactivated"
-
-    c.execute("UPDATE operators SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?", (new_active, user_id))
-    c.execute("UPDATE users SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (new_user_status, user_id))
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "success": True,
-        "message": f"Operator '{target['full_name']}' is now {'active' if new_active == 1 else 'deactivated'}.",
-        "active": new_active
-    })
-
-
-# ---------- ADMIN COMPLAINTS & FEEDBACK MANAGEMENT ----------
-
-@app.route("/api/admin/complaints")
-def api_admin_complaints():
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    status_filter = request.args.get("status", "all").strip().lower()
-    q = request.args.get("q", "").strip()
-
-    conn = get_db()
-    c = conn.cursor()
-
-    sql = "SELECT * FROM complaints WHERE 1=1"
-    params = []
-
-    if status_filter in ("pending", "resolved"):
-        sql += " AND status = ?"
-        params.append(status_filter)
-
-    if q:
-        escaped_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        sql += """ AND (
-            student_name LIKE ? ESCAPE '\\' 
-            OR roll_no LIKE ? ESCAPE '\\' 
-            OR subject LIKE ? ESCAPE '\\' 
-            OR message LIKE ? ESCAPE '\\'
-        )"""
-        pattern = f"%{escaped_q}%"
-        params.extend([pattern, pattern, pattern, pattern])
-
-    sql += " ORDER BY created_at DESC"
-
-    c.execute(sql, params)
-    complaints = []
-    for r in c.fetchall():
-        item = dict(r)
-        item["counter_name"] = get_counter_name(item["counter_slug"]) if item.get("counter_slug") else "General / Campus"
-        complaints.append(item)
-
-    c.execute("SELECT COUNT(*) as cnt FROM complaints WHERE status = 'pending'")
-    pending_cnt = c.fetchone()["cnt"]
-
-    c.execute("SELECT COUNT(*) as cnt FROM complaints WHERE status = 'resolved'")
-    resolved_cnt = c.fetchone()["cnt"]
-
-    conn.close()
-
-    return jsonify({
-        "complaints": complaints,
-        "total_count": len(complaints),
-        "pending_count": pending_cnt,
-        "resolved_count": resolved_cnt
-    })
-
-
-@app.route("/api/admin/complaints/<int:complaint_id>/reply", methods=["POST"])
-def api_admin_reply_complaint(complaint_id):
-    if not is_admin():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(silent=True) or request.form
-    reply = (payload.get("admin_reply") or "").strip()
-    status = (payload.get("status") or "resolved").strip().lower()
-
-    if not reply:
-        return jsonify({"error": "Resolution / reply text is required."}), 400
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT * FROM complaints WHERE id = ?", (complaint_id,))
-    target = c.fetchone()
-    if not target:
-        conn.close()
-        return jsonify({"error": "Complaint not found"}), 404
-
-    now_iso = datetime.now().isoformat(timespec="seconds")
-    c.execute("""
-        UPDATE complaints
-        SET admin_reply = ?, status = ?, resolved_at = ?, updated_at = ?
-        WHERE id = ?
-    """, (reply, status, now_iso, now_iso, complaint_id))
-    conn.commit()
-
-    if target["user_id"]:
-        create_notification(
-            target["user_id"],
-            "Feedback Resolved",
-            f"Administration responded to '{target['subject']}': {reply}",
-            "success"
-        )
-
-    conn.close()
-
-    return jsonify({
-        "success": True,
-        "message": f"Complaint #{complaint_id} marked as {status.upper()}.",
-        "status": status
-    })
-
-
-# ---------- SOCKET.IO EVENTS ----------
-
-@socketio.on("join")
-def handle_join(data):
-    if not isinstance(data, dict):
-        return False
-    room = data.get("room")
-    if not room or not isinstance(room, str):
-        return False
-
-    # 1. Admin channel protection
-    if room == "admin_global":
-        if not is_admin():
-            emit("error", {"message": "Unauthorized room access"})
-            return False
-
-    # 2. Private student notification channel
-    elif room.startswith("user_"):
-        target_uid = room[5:]
-        student_user = current_student()
-        if is_admin():
-            pass
-        elif student_user and str(student_user["id"]) == target_uid:
-            pass
-        else:
-            emit("error", {"message": "Unauthorized user room access"})
-            return False
-
-    # 3. Operator channel protection
-    elif room.startswith("operator_"):
-        if not (is_operator() or is_admin()):
-            emit("error", {"message": "Unauthorized operator room access"})
-            return False
-
-    join_room(room)
-    return True
-
-
-@socketio.on("leave")
-def handle_leave(data):
-    if isinstance(data, dict):
-        room = data.get("room")
-        if room and isinstance(room, str):
-            leave_room(room)
-
-
-# Auto-initialize database on application import (ensures Gunicorn startup initializes SQLite tables)
+    )
+
+
+@app.route("/admin/reports/export.csv")
+@login_required(role="admin")
+def admin_reports_export_csv():
+    selected_date = request.args.get("date", datetime.date.today().isoformat())
+    selected_dept = request.args.get("department_id", "all")
+
+    with db.get_db() as conn:
+        c = conn.cursor()
+        query = """
+            SELECT t.id, t.token_number, d.name as department, c.name as counter, c.code as counter_code,
+                   t.student_name, t.student_roll, t.service_reason, t.status, t.created_at, t.called_at, t.completed_at
+            FROM tokens t
+            JOIN counters c ON c.id = t.counter_id
+            JOIN departments d ON d.id = t.department_id
+            WHERE date(t.created_at) = ?
+        """
+        params = [selected_date]
+        if selected_dept != "all":
+            query += " AND t.department_id = ?"
+            params.append(int(selected_dept))
+
+        query += " ORDER BY t.id ASC"
+        c.execute(query, tuple(params))
+        rows = c.fetchall()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Token ID", "Token Number", "Department", "Counter", "Counter Code",
+        "Student Name", "Roll Number", "Service Purpose", "Status",
+        "Created At", "Called At", "Completed At"
+    ])
+
+    for r in rows:
+        writer.writerow([
+            r["id"], r["token_number"], r["department"], r["counter"], r["counter_code"],
+            r["student_name"], r["student_roll"], r["service_reason"] or "", r["status"],
+            r["created_at"], r["called_at"] or "", r["completed_at"] or ""
+        ])
+
+    csv_data = output.getvalue()
+    filename = f"QueueX_Report_{selected_date}.csv"
+
+    return Response(
+        csv_data,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment;filename={filename}"}
+    )
+
+
+
+
+# Auto-initialize database schema
 try:
     init_db()
-except Exception:
-    pass
+except Exception as _e:
+    print(f"[QueueX] DB Init Notice: {_e}")
 
-
-# ---------- RUN APP ----------
 if __name__ == "__main__":
-    init_db()
-    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
-    port = int(os.environ.get("PORT", "5000"))
-    socketio.run(app, debug=debug, port=port, host="0.0.0.0", allow_unsafe_werkzeug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)

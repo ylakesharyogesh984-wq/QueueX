@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}My Profile – QueueX{% endblock %}
+
+{% block content %}
+<div class="app-layout">
+  
+  <aside class="app-sidebar">
+    <div class="sidebar-user">
+      <strong style="color: var(--qx-navy);">{{ student['full_name'] }}</strong>
+      <span style="font-size: 0.78rem; color: var(--text-secondary);">Roll No: {{ student['identifier'] }}</span>
+    </div>
+
+    <a href="{{ url_for('student_portal') }}" class="sidebar-link">🎟️ Queue Dashboard</a>
+    <a href="{{ url_for('student_profile') }}" class="sidebar-link active">👤 My Profile</a>
+    <a href="{{ url_for('student_settings') }}" class="sidebar-link">⚙️ Settings & Alerts</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Counters</a>
+    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+  </aside>
+
+  <main class="app-content">
+    
+    <div style="margin-bottom: 2rem;">
+      <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Student Profile</h2>
+      <p style="font-size: 0.88rem; color: var(--text-secondary);">Manage your CGC University student records and queue contact details</p>
+    </div>
+
+    <div class="neu-card" style="max-width: 680px; padding: 2rem;">
+      <form method="POST" action="{{ url_for('student_profile') }}">
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+          <div class="form-group">
+            <label class="form-label">Full Name *</label>
+            <input type="text" name="full_name" class="neu-input" value="{{ student['full_name'] }}" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Roll Number (Unique ID)</label>
+            <input type="text" class="neu-input" value="{{ student['identifier'] }}" disabled style="opacity: 0.7;">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+          <div class="form-group">
+            <label class="form-label">Email Address</label>
+            <input type="email" class="neu-input" value="{{ student['email'] }}" disabled style="opacity: 0.7;">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Phone Number (SMS / Call alerts)</label>
+            <input type="tel" name="phone" class="neu-input" value="{{ student['phone'] }}" placeholder="e.g. 9812345678">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.25rem;">
+          <div class="form-group">
+            <label class="form-label">Department</label>
+            <select name="department" class="neu-select">
+              <option value="CSE" {% if student['department'] == 'CSE' %}selected{% endif %}>CSE</option>
+              <option value="IT" {% if student['department'] == 'IT' %}selected{% endif %}>IT</option>
+              <option value="ECE" {% if student['department'] == 'ECE' %}selected{% endif %}>ECE</option>
+              <option value="ME" {% if student['department'] == 'ME' %}selected{% endif %}>ME</option>
+              <option value="MBA" {% if student['department'] == 'MBA' %}selected{% endif %}>MBA</option>
+              <option value="Pharmacy" {% if student['department'] == 'Pharmacy' %}selected{% endif %}>Pharmacy</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Course Degree</label>
+            <input type="text" name="course" class="neu-input" value="{{ student['course'] or 'B.Tech' }}">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Semester</label>
+            <select name="semester" class="neu-select">
+              {% for s in range(1, 9) %}
+                <option value="{{ s }}" {% if student['semester'] == s %}selected{% endif %}>Sem {{ s }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div style="margin-top: 1.5rem; text-align: right;">
+          <button type="submit" class="neu-btn neu-btn-primary" style="padding: 0.75rem 2rem;">
+            Save Profile Changes
+          </button>
+        </div>
+
+      </form>
+    </div>
+
+  </main>
+</div>
+{% endblock %}

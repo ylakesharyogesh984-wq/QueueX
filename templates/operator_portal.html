@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}Operator Dashboard – QueueX{% endblock %}
+
+{% block content %}
+<div class="app-layout">
+  
+  <!-- Operator Sidebar -->
+  <aside class="app-sidebar">
+    <div class="sidebar-user">
+      <strong style="color: var(--qx-navy); font-size: 0.95rem;">{{ operator['full_name'] }}</strong>
+      <span style="font-size: 0.78rem; color: var(--text-secondary);">Employee ID: <strong>{{ operator['identifier'] }}</strong></span>
+      {% if counter %}
+        <span style="font-size: 0.75rem; color: var(--qx-blue); font-weight: 700; margin-top: 0.2rem;">
+          📍 {{ counter['code'] }} • {{ counter['name'] }}
+        </span>
+      {% else %}
+        <span style="font-size: 0.75rem; color: var(--danger);">No Counter Assigned</span>
+      {% endif %}
+    </div>
+
+    <a href="{{ url_for('operator_portal') }}" class="sidebar-link active">🖥️ Counter Operations</a>
+    <a href="{{ url_for('operator_profile') }}" class="sidebar-link">👤 Operator Profile</a>
+    <a href="{{ url_for('operator_settings') }}" class="sidebar-link">⚙️ Account Settings</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Board</a>
+    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+  </aside>
+
+  <!-- Main Desk Content -->
+  <main class="app-content">
+    
+    <!-- Desk Top Bar -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
+      <div>
+        <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Counter Desk Operations</h2>
+        <p style="font-size: 0.88rem; color: var(--text-secondary);">
+          {% if counter %}
+            {{ counter['department_name'] }} • <strong>{{ counter['name'] }}</strong> ({{ counter['building_block'] }})
+          {% else %}
+            Please contact administration to assign a service counter to your account.
+          {% endif %}
+        </p>
+      </div>
+
+      {% if counter %}
+        <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+          <!-- Counter Open/Close State -->
+          <form method="POST" action="{{ url_for('operator_toggle_counter') }}" style="display: inline;">
+            {% if counter['is_active'] %}
+              <input type="hidden" name="action" value="close">
+              <button type="submit" class="neu-btn neu-btn-danger" style="font-size: 0.82rem;" onclick="return confirm('Close counter? Students will not be able to generate new tokens.');">
+                🛑 Close Counter
+              </button>
+            {% else %}
+              <input type="hidden" name="action" value="open">
+              <button type="submit" class="neu-btn neu-btn-primary" style="font-size: 0.82rem;">
+                🟢 Reopen Counter
+              </button>
+            {% endif %}
+          </form>
+
+          <!-- Queue Pause/Resume -->
+          {% if counter['is_active'] %}
+            {% if counter['is_paused'] %}
+              <form method="POST" action="{{ url_for('operator_resume_queue') }}" style="display: inline;">
+                <button type="submit" class="neu-btn neu-btn-primary" style="font-size: 0.82rem;">
+                  ▶️ Resume Calling
+                </button>
+              </form>
+            {% else %}
+              <form method="POST" action="{{ url_for('operator_pause_queue') }}" style="display: inline;">
+                <button type="submit" class="neu-btn" style="font-size: 0.82rem;" onclick="return confirm('Pause queue temporarily for short break?');">
+                  ⏸️ Pause Queue
+                </button>
+              </form>
+            {% endif %}
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+
+    {% if counter %}
+      <!-- Desk Metrics -->
+      <div class="stat-grid">
+        <div class="neu-card stat-card">
+          <div class="stat-title">Currently Serving</div>
+          <div class="stat-value" style="color: var(--qx-blue);">
+            {% if currently_serving %}#{{ currently_serving['token_number'] }}{% else %}—{% endif %}
+          </div>
+          <div class="stat-desc">
+            {% if currently_serving %}
+              {{ currently_serving['student_name'] }} ({{ currently_serving['student_roll'] }})
+            {% else %}
+              Counter Idle / Ready for Next
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="neu-card stat-card">
+          <div class="stat-title">Waiting in Queue</div>
+          <div class="stat-value" style="color: {% if stats['waiting'] > 5 %}var(--danger){% else %}var(--success){% endif %};">
+            {{ stats['waiting'] }}
+          </div>
+          <div class="stat-desc">Students queued for this counter</div>
+        </div>
+
+        <div class="neu-card stat-card">
+          <div class="stat-title">Served Today</div>
+          <div class="stat-value" style="color: var(--success);">
+            {{ stats['completed'] }}
+          </div>
+          <div class="stat-desc">Total completed interactions</div>
+        </div>
+
+        <div class="neu-card stat-card">
+          <div class="stat-title">Counter Status</div>
+          <div style="margin-top: 0.5rem;">
+            {% if not counter['is_active'] %}
+              <span class="badge badge-danger" style="font-size: 0.9rem; padding: 0.4rem 0.9rem;">CLOSED</span>
+            {% elif counter['is_paused'] %}
+              <span class="badge badge-warning" style="font-size: 0.9rem; padding: 0.4rem 0.9rem;">PAUSED</span>
+            {% else %}
+              <span class="badge badge-success" style="font-size: 0.9rem; padding: 0.4rem 0.9rem;">OPEN & ACTIVE</span>
+            {% endif %}
+          </div>
+          <div class="stat-desc" style="margin-top: 0.5rem;">Avg: {{ stats['avg_time'] }} mins / student</div>
+        </div>
+      </div>
+
+      <!-- Action Controller Card -->
+      <div class="neu-card" style="margin-bottom: 2.5rem; border-left: 5px solid var(--qx-navy);">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+          
+          <!-- Current Serving Details -->
+          <div style="flex: 1; min-width: 280px;">
+            <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">
+              CURRENT ACTION FOCUS
+            </div>
+
+            {% if currently_serving %}
+              <div style="display: flex; align-items: baseline; gap: 0.75rem; margin-top: 0.25rem;">
+                <span style="font-size: 2.5rem; font-weight: 800; font-family: var(--font-mono); color: var(--qx-blue);">
+                  #{{ currently_serving['token_number'] }}
+                </span>
+                <div>
+                  <strong style="font-size: 1.15rem; color: var(--text-primary); display: block;">{{ currently_serving['student_name'] }}</strong>
+                  <span style="font-size: 0.82rem; color: var(--text-secondary);">
+                    Roll: <strong>{{ currently_serving['student_roll'] }}</strong> • Phone: {{ currently_serving['student_phone'] or 'N/A' }}
+                  </span>
+                </div>
+              </div>
+              <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.4rem;">
+                Reason: <strong>{{ currently_serving['service_reason'] or 'General Enquiry' }}</strong> • Called at: {{ currently_serving['called_at'][:16] }}
+              </div>
+            {% else %}
+              <div style="font-size: 1.4rem; font-weight: 700; color: var(--text-muted); margin-top: 0.5rem;">
+                No token currently at counter.
+              </div>
+              <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                {% if stats['waiting'] > 0 %}
+                  {{ stats['waiting'] }} students waiting. Click <strong>Call Next Student</strong> to advance the line.
+                {% else %}
+                  Queue is currently empty.
+                {% endif %}
+              </p>
+            {% endif %}
+          </div>
+
+          <!-- Action Buttons -->
+          <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+            {% if currently_serving %}
+              <!-- Complete Button -->
+              <form method="POST" action="{{ url_for('operator_complete_token', token_id=currently_serving['id']) }}">
+                <button type="submit" class="neu-btn neu-btn-primary" style="padding: 0.8rem 1.6rem; font-size: 0.95rem;">
+                  ✅ Complete Service
+                </button>
+              </form>
+
+              <!-- Skip Button -->
+              <form method="POST" action="{{ url_for('operator_skip_token', token_id=currently_serving['id']) }}" onsubmit="return confirm('Skip token #{{ currently_serving['token_number'] }}?');">
+                <button type="submit" class="neu-btn neu-btn-danger" style="padding: 0.8rem 1.4rem; font-size: 0.95rem;">
+                  ⏭️ Skip No-Show
+                </button>
+              </form>
+            {% else %}
+              <!-- Call Next -->
+              <form method="POST" action="{{ url_for('operator_call_next') }}">
+                <button type="submit" class="neu-btn neu-btn-primary" style="padding: 0.85rem 2rem; font-size: 1rem;" {% if stats['waiting'] == 0 or not counter['is_active'] or counter['is_paused'] %}disabled style="opacity: 0.5;"{% endif %}>
+                  📢 Call Next Student
+                </button>
+              </form>
+
+              <!-- Recall Last Skipped -->
+              {% if last_skipped %}
+                <form method="POST" action="{{ url_for('operator_recall_token', token_id=last_skipped['id']) }}" onsubmit="return confirm('Recall skipped Token #{{ last_skipped['token_number'] }}?');">
+                  <button type="submit" class="neu-btn" style="padding: 0.85rem 1.4rem; font-size: 0.95rem;">
+                    🔄 Recall Token #{{ last_skipped['token_number'] }}
+                  </button>
+                </form>
+              {% endif %}
+            {% endif %}
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Waiting Queue Table -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+        <div>
+          <h3 style="font-size: 1.25rem; font-weight: 800; color: var(--qx-navy);">Waiting Students Queue ({{ waiting_tokens|length }})</h3>
+          <p style="font-size: 0.8rem; color: var(--text-secondary);">Ordered strictly by FIFO arrival timestamp</p>
+        </div>
+
+        <div>
+          <input type="text" id="queue-search" class="neu-input" placeholder="Search by name or roll..." onkeyup="filterQueueTable()" style="width: 240px; padding: 0.4rem 0.8rem; font-size: 0.82rem;">
+        </div>
+      </div>
+
+      <div class="neu-card" style="padding: 1rem; overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.88rem;" id="queue-table">
+          <thead>
+            <tr style="border-bottom: 2px solid var(--border-subtle); color: var(--text-secondary);">
+              <th style="padding: 0.75rem;">Token #</th>
+              <th style="padding: 0.75rem;">Student Name</th>
+              <th style="padding: 0.75rem;">Roll Number</th>
+              <th style="padding: 0.75rem;">Purpose / Reason</th>
+              <th style="padding: 0.75rem;">Joined Queue At</th>
+              <th style="padding: 0.75rem;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in waiting_tokens %}
+              <tr style="border-bottom: 1px solid var(--border-subtle);">
+                <td style="padding: 0.75rem; font-weight: 800; font-family: var(--font-mono); color: var(--qx-blue);">
+                  #{{ t['token_number'] }}
+                </td>
+                <td style="padding: 0.75rem; font-weight: 600;">{{ t['student_name'] }}</td>
+                <td style="padding: 0.75rem; font-family: var(--font-mono);">{{ t['student_roll'] }}</td>
+                <td style="padding: 0.75rem;">{{ t['service_reason'] or '—' }}</td>
+                <td style="padding: 0.75rem; font-size: 0.8rem; color: var(--text-secondary);">{{ t['created_at'][11:19] }}</td>
+                <td style="padding: 0.75rem;">
+                  <span class="badge badge-warning">Waiting in Line</span>
+                </td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="6" style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
+                  No students currently waiting for this counter.
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+    {% else %}
+      <div class="neu-card" style="text-align: center; padding: 3rem; color: var(--text-muted);">
+        <h3>No Counter Assigned</h3>
+        <p style="margin-top: 0.5rem;">Your operator profile is not linked to any active counter desk.</p>
+      </div>
+    {% endif %}
+
+  </main>
+</div>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+function filterQueueTable() {
+  const query = document.getElementById("queue-search").value.toLowerCase();
+  const rows = document.querySelectorAll("#queue-table tbody tr");
+  rows.forEach(r => {
+    const text = r.innerText.toLowerCase();
+    r.style.display = text.includes(query) ? "" : "none";
+  });
+}
+
+// Live Queue updates via WebSocket with fallback
+{% if counter %}
+try {
+  if (typeof io !== "undefined") {
+    const socket = io();
+    socket.on("connect", () => {
+      socket.emit("join_counter", { counter_id: {{ counter['id'] }} });
+    });
+    socket.on("queue_update", (payload) => {
+      // Reload on state mutations to update counter desk and table
+      window.location.reload();
+    });
+  }
+} catch (err) {
+  console.info("Operator live sync fallback enabled.");
+}
+{% endif %}
+</script>
+{% endblock %}

@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}Student Dashboard – QueueX{% endblock %}
+
+{% block content %}
+<div class="app-layout">
+  
+  <!-- Sidebar -->
+  <aside class="app-sidebar">
+    <div class="sidebar-user">
+      <strong style="color: var(--qx-navy); font-size: 0.95rem;">{{ student['full_name'] }}</strong>
+      <span style="font-size: 0.78rem; color: var(--text-secondary);">Roll No: <strong>{{ student['identifier'] }}</strong></span>
+      <span style="font-size: 0.75rem; color: var(--text-muted);">{{ student['course'] }} ({{ student['department'] }}) • Sem {{ student['semester'] }}</span>
+    </div>
+
+    <a href="{{ url_for('student_portal') }}" class="sidebar-link active">🎟️ Queue Dashboard</a>
+    <a href="{{ url_for('student_profile') }}" class="sidebar-link">👤 My Profile</a>
+    <a href="{{ url_for('student_settings') }}" class="sidebar-link">⚙️ Settings & Alerts</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Counters</a>
+    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+  </aside>
+
+  <!-- Main Portal Content -->
+  <main class="app-content">
+    
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
+      <div>
+        <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Student Queue Portal</h2>
+        <p style="font-size: 0.88rem; color: var(--text-secondary);">CGC University Mohali • Real-Time Queue Tracker</p>
+      </div>
+
+      {% if not active_token %}
+        <button class="neu-btn neu-btn-primary" onclick="openTokenModal()">
+          ➕ Generate Queue Token
+        </button>
+      {% endif %}
+    </div>
+
+    <!-- Active Token Live Banner -->
+    {% if active_token %}
+      <div class="neu-card" style="margin-bottom: 2rem; border-left: 5px solid var(--qx-blue); background: linear-gradient(135deg, var(--bg-card) 0%, rgba(37,99,235,0.06) 100%);">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+          
+          <div>
+            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+              <span class="badge badge-info">{{ active_token['department_name'] }}</span>
+              <span class="badge {% if active_token['status'] == 'serving' %}badge-success{% else %}badge-warning{% endif %}">
+                {% if active_token['status'] == 'serving' %}🟢 NOW SERVING{% else %}⏳ WAITING IN LINE{% endif %}
+              </span>
+            </div>
+
+            <div style="font-size: 0.85rem; color: var(--text-secondary);">Your Assigned Token:</div>
+            <div style="font-size: 3rem; font-weight: 800; color: var(--qx-blue); font-family: var(--font-mono); line-height: 1.1;">
+              #{{ active_token['token_number'] }}
+            </div>
+
+            <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-primary); margin-top: 0.5rem;">
+              {{ active_token['counter_name'] }} ({{ active_token['counter_code'] }})
+            </h3>
+            <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.2rem;">
+              📍 {{ active_token['building_block'] }} • Reason: <strong>{{ active_token['service_reason'] or 'General Enquiry' }}</strong>
+            </div>
+          </div>
+
+          <!-- Live Position Cards -->
+          <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+            <div class="neu-inset" style="padding: 1rem 1.5rem; text-align: center; min-width: 140px;">
+              <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">PEOPLE AHEAD</div>
+              <div id="live-ahead" style="font-size: 2.2rem; font-weight: 800; color: var(--qx-navy); font-family: var(--font-mono);">
+                {{ active_meta['people_ahead'] }}
+              </div>
+            </div>
+
+            <div class="neu-inset" style="padding: 1rem 1.5rem; text-align: center; min-width: 140px;">
+              <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">EST. WAIT TIME</div>
+              <div id="live-wait" style="font-size: 2.2rem; font-weight: 800; color: {% if active_meta['est_mins'] > 15 %}var(--danger){% else %}var(--success){% endif %}; font-family: var(--font-mono);">
+                {{ active_meta['est_mins'] }}m
+              </div>
+            </div>
+
+            <div class="neu-inset" style="padding: 0.5rem; text-align: center; background: #ffffff;">
+              <img src="data:image/png;base64,{{ active_meta['qr_image'] }}" alt="Token QR" style="width: 80px; height: 80px; display: block;">
+              <div style="font-size: 0.65rem; color: #475569; font-weight: 700;">SCAN AT COUNTER</div>
+            </div>
+          </div>
+
+        </div>
+
+        <div style="margin-top: 1.5rem; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-subtle); padding-top: 1rem; flex-wrap: wrap; gap: 1rem;">
+          <a href="{{ url_for('student_token_status', token_id=active_token['id']) }}" class="neu-btn neu-btn-primary" style="font-size: 0.85rem;">
+            Full Token Status &amp; Live Tracking &rarr;
+          </a>
+
+          {% if active_token['status'] == 'waiting' %}
+            <form method="POST" action="{{ url_for('student_cancel_token', token_id=active_token['id']) }}" onsubmit="return confirm('Are you sure you want to cancel this token?');">
+              <button type="submit" class="neu-btn neu-btn-danger" style="font-size: 0.85rem;">
+                Cancel Token
+              </button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+
+    <!-- Generate Token Modal / Form -->
+    <div id="token-modal" class="neu-card" style="display: {% if not active_token %}block{% else %}none{% endif %}; margin-bottom: 2.5rem; border-left: 4px solid var(--qx-blue);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+        <div>
+          <h3 style="font-size: 1.25rem; font-weight: 800; color: var(--qx-navy);">Generate Virtual Queue Token</h3>
+          <p style="font-size: 0.82rem; color: var(--text-secondary);">Select the desk you wish to visit at CGC University</p>
+        </div>
+      </div>
+
+      <form method="POST" action="{{ url_for('student_generate_token') }}">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; margin-bottom: 1.25rem;">
+          
+          <div class="form-group">
+            <label class="form-label">Service Counter *</label>
+            <select name="counter_id" class="neu-select" required>
+              <option value="" disabled selected>Select counter...</option>
+              {% for c in counters %}
+                <option value="{{ c['id'] }}">{{ c['department_name'] }} — {{ c['name'] }} ({{ c['code'] }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Service Reason / Purpose</label>
+            <input type="text" name="service_reason" class="neu-input" placeholder="e.g. Semester Fee, Bonafide Cert, Book Return">
+          </div>
+
+        </div>
+
+        <div style="display: flex; gap: 0.75rem;">
+          <button type="submit" class="neu-btn neu-btn-primary" style="padding: 0.75rem 1.75rem;">
+            🎟️ Generate Token &amp; Join Queue
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Available Departments Grid -->
+    <h3 style="font-size: 1.25rem; font-weight: 800; color: var(--qx-navy); margin-bottom: 1rem;">Available University Departments</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.25rem; margin-bottom: 2.5rem;">
+      {% for d in departments %}
+        <div class="neu-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <span class="badge badge-info">{{ d['code'] }}</span>
+            <span class="badge badge-success">{{ d['open_counters'] }} Open Counters</span>
+          </div>
+
+          <h4 style="font-size: 1.15rem; font-weight: 800; color: var(--qx-navy); margin-top: 0.35rem;">{{ d['name'] }}</h4>
+          <p style="font-size: 0.82rem; color: var(--text-secondary); margin-top: 0.25rem;">{{ d['description'] }}</p>
+          
+          <div class="neu-inset" style="padding: 0.65rem 0.85rem; margin-top: 0.85rem; font-size: 0.8rem; display: flex; justify-content: space-between; align-items: center;">
+            <span>📍 {{ d['building_block'] }}</span>
+            <span>Waiting: <strong style="color: var(--qx-blue);">{{ d['total_waiting'] }}</strong> students</span>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <!-- Student Token History -->
+    <h3 style="font-size: 1.25rem; font-weight: 800; color: var(--qx-navy); margin-bottom: 1rem;">Recent Token History</h3>
+    <div class="neu-card" style="padding: 1rem; overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.88rem;">
+        <thead>
+          <tr style="border-bottom: 2px solid var(--border-subtle); color: var(--text-secondary);">
+            <th style="padding: 0.75rem;">Token #</th>
+            <th style="padding: 0.75rem;">Counter / Department</th>
+            <th style="padding: 0.75rem;">Date &amp; Time</th>
+            <th style="padding: 0.75rem;">Service Reason</th>
+            <th style="padding: 0.75rem;">Status</th>
+            <th style="padding: 0.75rem; text-align: right;">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in token_history %}
+            <tr style="border-bottom: 1px solid var(--border-subtle);">
+              <td style="padding: 0.75rem; font-weight: 800; font-family: var(--font-mono); color: var(--qx-blue);">#{{ t['token_number'] }}</td>
+              <td style="padding: 0.75rem;">
+                <div style="font-weight: 600;">{{ t['counter_name'] }}</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted);">{{ t['department_name'] }}</div>
+              </td>
+              <td style="padding: 0.75rem; font-size: 0.8rem;">{{ t['created_at'][:16] }}</td>
+              <td style="padding: 0.75rem;">{{ t['service_reason'] or '—' }}</td>
+              <td style="padding: 0.75rem;">
+                {% if t['status'] == 'served' %}
+                  <span class="badge badge-success">Completed</span>
+                {% elif t['status'] == 'serving' %}
+                  <span class="badge badge-info">Serving Now</span>
+                {% elif t['status'] == 'waiting' %}
+                  <span class="badge badge-warning">Waiting</span>
+                {% elif t['status'] == 'skipped' %}
+                  <span class="badge badge-danger">Skipped</span>
+                {% else %}
+                  <span class="badge" style="background: #e2e8f0; color: #475569;">Cancelled</span>
+                {% endif %}
+              </td>
+              <td style="padding: 0.75rem; text-align: right;">
+                <a href="{{ url_for('student_token_status', token_id=t['id']) }}" class="neu-btn" style="padding: 0.35rem 0.65rem; font-size: 0.78rem;">
+                  View &rarr;
+                </a>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                No previous tokens found. Click "Generate Queue Token" above to join a queue.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </main>
+</div>
+
+<script>
+function openTokenModal() {
+  const el = document.getElementById('token-modal');
+  el.style.display = 'block';
+  el.scrollIntoView({ behavior: 'smooth' });
+}
+</script>
+{% endblock %}

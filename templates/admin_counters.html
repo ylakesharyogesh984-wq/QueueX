@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}Counter Management – QueueX Admin{% endblock %}
+
+{% block content %}
+<div class="app-layout">
+  
+  <aside class="app-sidebar">
+    <div class="sidebar-user">
+      <strong style="color: var(--qx-navy);">CGC System Admin</strong>
+      <span style="font-size: 0.78rem; color: var(--text-secondary);">Central Administration</span>
+    </div>
+    <a href="{{ url_for('admin_portal') }}" class="sidebar-link">📊 System Dashboard</a>
+    <a href="{{ url_for('admin_departments') }}" class="sidebar-link">🏢 Departments</a>
+    <a href="{{ url_for('admin_counters') }}" class="sidebar-link active">🪟 Service Counters</a>
+    <a href="{{ url_for('admin_operators') }}" class="sidebar-link">👨‍💼 Operators</a>
+    <a href="{{ url_for('admin_reports') }}" class="sidebar-link">📈 Reports & Export</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Board</a>
+  </aside>
+
+  <main class="app-content">
+    
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
+      <div>
+        <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Counter Desk Configuration</h2>
+        <p style="font-size: 0.88rem; color: var(--text-secondary);">Manage physical service windows, operator desk allocations, and speed targets</p>
+      </div>
+
+      <button class="neu-btn neu-btn-primary" onclick="toggleCounterForm()">
+        ➕ Add New Counter
+      </button>
+    </div>
+
+    <!-- Create Counter Box -->
+    <div id="add-counter-form" class="neu-card" style="display: none; margin-bottom: 2rem; border-left: 4px solid var(--qx-blue);">
+      <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--qx-navy); margin-bottom: 1.25rem;">New Counter Desk</h3>
+      <form method="POST" action="{{ url_for('admin_counter_create') }}">
+        <div style="display: grid; grid-template-columns: 2fr 1fr 2fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label">Counter Name *</label>
+            <input type="text" name="name" class="neu-input" placeholder="e.g. Migration & Degree Verification Desk" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Counter Code (Unique) *</label>
+            <input type="text" name="code" class="neu-input" placeholder="e.g. REG-W3" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Department *</label>
+            <select name="department_id" class="neu-select" required>
+              {% for d in departments %}
+                <option value="{{ d['id'] }}">{{ d['name'] }} ({{ d['code'] }})</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label">Avg. Service Minutes</label>
+            <input type="number" name="avg_service_time_mins" class="neu-input" value="8" min="1" max="120">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Assign Initial Operator (Optional)</label>
+            <select name="operator_id" class="neu-select">
+              <option value="">No Operator Assigned</option>
+              {% for op in operators %}
+                <option value="{{ op['id'] }}">{{ op['full_name'] }} ({{ op['identifier'] }})</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 0.75rem;">
+          <button type="submit" class="neu-btn neu-btn-primary">Create Counter</button>
+          <button type="button" class="neu-btn" onclick="toggleCounterForm()">Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Counters Table -->
+    <div class="neu-card" style="padding: 1rem; overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.88rem;">
+        <thead>
+          <tr style="border-bottom: 2px solid var(--border-subtle); color: var(--text-secondary);">
+            <th style="padding: 0.75rem;">Desk / Code</th>
+            <th style="padding: 0.75rem;">Department</th>
+            <th style="padding: 0.75rem;">Assigned Operator</th>
+            <th style="padding: 0.75rem;">Live Queue</th>
+            <th style="padding: 0.75rem;">Status</th>
+            <th style="padding: 0.75rem; text-align: right;">Desk Controls</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in counters %}
+            <tr style="border-bottom: 1px solid var(--border-subtle);">
+              <td style="padding: 0.75rem;">
+                <div style="font-weight: 700; color: var(--qx-navy);">{{ c['name'] }}</div>
+                <div style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--qx-blue);">{{ c['code'] }} • Target: {{ c['avg_service_time_mins'] }}m</div>
+              </td>
+              <td style="padding: 0.75rem;">
+                {{ c['department_name'] }}
+              </td>
+              <td style="padding: 0.75rem;">
+                {% if c['operator_name'] %}
+                  <strong style="color: var(--qx-navy);">{{ c['operator_name'] }}</strong>
+                  <div style="font-size: 0.75rem; color: var(--text-muted);">{{ c['operator_identifier'] }}</div>
+                {% else %}
+                  <span style="color: var(--text-muted); font-size: 0.82rem;">Unassigned</span>
+                {% endif %}
+              </td>
+              <td style="padding: 0.75rem;">
+                <span class="badge {% if c['waiting_count'] > 5 %}badge-danger{% else %}badge-info{% endif %}">
+                  {{ c['waiting_count'] }} Waiting
+                </span>
+                {% if c['now_serving'] %}
+                  <div style="font-size: 0.75rem; color: var(--success); margin-top: 0.2rem; font-weight: 600;">
+                    Serving #{{ c['now_serving'] }}
+                  </div>
+                {% endif %}
+              </td>
+              <td style="padding: 0.75rem;">
+                {% if not c['is_active'] %}
+                  <span class="badge badge-danger">Closed</span>
+                {% elif c['is_paused'] %}
+                  <span class="badge badge-warning">Paused</span>
+                {% else %}
+                  <span class="badge badge-success">Active Open</span>
+                {% endif %}
+              </td>
+              <td style="padding: 0.75rem; text-align: right;">
+                <div style="display: flex; gap: 0.35rem; justify-content: flex-end; align-items: center;">
+                  <!-- Open/Close toggle -->
+                  <form method="POST" action="{{ url_for('admin_counter_action', counter_id=c['id']) }}" style="display: inline;">
+                    {% if c['is_active'] %}
+                      <input type="hidden" name="action" value="close">
+                      <button type="submit" class="neu-btn" style="padding: 0.3rem 0.55rem; font-size: 0.75rem; color: var(--danger);">Close</button>
+                    {% else %}
+                      <input type="hidden" name="action" value="open">
+                      <button type="submit" class="neu-btn" style="padding: 0.3rem 0.55rem; font-size: 0.75rem; color: var(--success);">Open</button>
+                    {% endif %}
+                  </form>
+
+                  <!-- Pause/Resume toggle -->
+                  {% if c['is_active'] %}
+                    <form method="POST" action="{{ url_for('admin_counter_action', counter_id=c['id']) }}" style="display: inline;">
+                      {% if c['is_paused'] %}
+                        <input type="hidden" name="action" value="resume">
+                        <button type="submit" class="neu-btn" style="padding: 0.3rem 0.55rem; font-size: 0.75rem; color: var(--success);">Resume</button>
+                      {% else %}
+                        <input type="hidden" name="action" value="pause">
+                        <button type="submit" class="neu-btn" style="padding: 0.3rem 0.55rem; font-size: 0.75rem; color: var(--warning);">Pause</button>
+                      {% endif %}
+                    </form>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </main>
+</div>
+
+<script>
+function toggleCounterForm() {
+  const el = document.getElementById('add-counter-form');
+  el.style.display = (el.style.display === 'none' || el.style.display === '') ? 'block' : 'none';
+}
+</script>
+{% endblock %}

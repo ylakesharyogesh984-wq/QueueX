@@ -1,161 +1,82 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#6366F1">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="QueueX">
-<title>QueueX — Real-time Campus Queue System</title>
-<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
-<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
-<link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<meta name="csrf-token" content="{{ csrf_token() }}">
-</head>
-<body data-interface="public">
+{% extends "base.html" %}
+{% block title %}Live Campus Counters – QueueX{% endblock %}
 
-<div class="navbar">
-  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
-  <div class="nav-actions">
-    <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
-    <button class="burger-btn" id="burger-btn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="nav-links">
-      <span class="burger-line"></span>
-      <span class="burger-line"></span>
-      <span class="burger-line"></span>
-    </button>
-  </div>
-  <div class="nav-links" id="nav-links">
-    <button type="button" class="btn btn-outline btn-sm" id="install-app-btn" hidden>Install</button>
-    <a href="{{ url_for('operator_login') }}" class="btn btn-outline btn-sm">Operator</a>
-    <a href="{{ url_for('admin_login') }}" class="btn btn-outline btn-sm">Admin</a>
-    <a href="{{ url_for('student') }}" class="btn btn-primary btn-sm">Get Token</a>
-  </div>
-</div>
-<div class="nav-backdrop" id="nav-backdrop"></div>
-
-<div class="hero">
-  <div class="eyebrow">● LIVE ACROSS {{ counters|length }} CAMPUS COUNTERS</div>
-  <h1>Skip the wait.<br><span>Not the line.</span></h1>
-  <p>QueueX replaces physical lines at college counters with a live digital token pass. Track your position in real time from anywhere across campus.</p>
+{% block content %}
+<div style="max-width: 1200px; margin: 2.5rem auto; padding: 0 1.5rem;">
   
-  <div class="hero-ctas">
-    <a href="{{ url_for('student') }}" class="btn btn-primary">Get Your Token →</a>
-    <a href="{{ url_for('operator_login') }}" class="btn btn-outline">Operator Console</a>
+  <!-- Hero Section -->
+  <section class="neu-card" style="padding: 3rem 2rem; text-align: center; margin-bottom: 2.5rem; background: linear-gradient(135deg, #f8fafc 0%, #edf2f7 100%);">
+    <div style="display: inline-block; padding: 0.35rem 1rem; border-radius: var(--radius-pill); background: #e0f2fe; color: #0284c7; font-weight: 700; font-size: 0.78rem; margin-bottom: 1rem;">
+      OFFICIAL CAMPUS VIRTUAL QUEUE
+    </div>
+    <h1 style="font-size: 2.5rem; font-weight: 800; color: var(--qx-navy); margin-bottom: 1rem; letter-spacing: -0.5px;">
+      Skip the Physical Queue
+    </h1>
+    <p style="font-size: 1.05rem; color: var(--text-secondary); max-width: 680px; margin: 0 auto 2rem;">
+      Generate digital tokens for Fee Accounts, Registrar, Examination, and Library desks across CGC University Mohali. Track your live queue position from your phone.
+    </p>
+
+    <div style="display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap;">
+      {% if session.get('user_id') %}
+        <a href="{{ url_for('student_portal') }}" class="neu-btn neu-btn-primary" style="padding: 0.8rem 1.8rem;">Enter Student Portal</a>
+      {% else %}
+        <a href="{{ url_for('register') }}" class="neu-btn neu-btn-primary" style="padding: 0.8rem 1.8rem;">Get Token / Register</a>
+        <a href="{{ url_for('login') }}" class="neu-btn" style="padding: 0.8rem 1.8rem;">Sign In</a>
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- Live Counters List -->
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div>
+      <h2 style="font-size: 1.5rem; font-weight: 800; color: var(--qx-navy);">Active Service Counters</h2>
+      <p style="font-size: 0.85rem; color: var(--text-secondary);">Real-time status across campus blocks</p>
+    </div>
   </div>
 
-  <div class="app-dock" aria-label="Quick actions">
-    <a href="{{ url_for('student') }}" class="dock-item">
-      <span class="dock-icon">#</span>
-      <span>Get Token</span>
-    </a>
-    <a href="{{ url_for('operator_login') }}" class="dock-item">
-      <span class="dock-icon">▶</span>
-      <span>Call Next</span>
-    </a>
-    <a href="{{ url_for('admin_login') }}" class="dock-item">
-      <span class="dock-icon">▥</span>
-      <span>Admin</span>
-    </a>
-  </div>
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem;">
+    {% for c in counters %}
+      <div class="neu-card" style="display: flex; flex-direction: column; justify-content: space-between;">
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+            <span class="badge badge-info">{{ c['department_name'] }}</span>
+            <span class="badge badge-success">Open</span>
+          </div>
 
-  <div class="queue-rail-wrap">
-    <div class="queue-rail-label">
-      <span>Accounts Office</span>
-      <span>Live Queue Stream</span>
-    </div>
-    <div class="queue-rail">
-      <div class="rail-chip serving">#29</div>
-      <span class="rail-arrow">→</span>
-      <div class="rail-chip">#30</div>
-      <div class="rail-chip">#31</div>
-      <div class="rail-chip">#32</div>
-      <div class="rail-chip">#33</div>
-      <div class="rail-chip">#34</div>
-      <div class="rail-chip you">#37</div>
-    </div>
-  </div>
-</div>
+          <h3 style="font-size: 1.25rem; font-weight: 800; color: var(--qx-navy); margin-top: 0.35rem;">{{ c['name'] }}</h3>
+          <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">
+            📍 {{ c['building_block'] }} • Code: <strong>{{ c['code'] }}</strong>
+          </div>
 
-<div class="section">
-  <div class="section-head">
-    <div class="eyebrow" style="display:inline-block;">WHY QUEUEX</div>
-    <h2>Built for how campuses actually move</h2>
-    <p>Zero hardware footprint, zero app installation required — just a lightning-fast responsive interface with instantaneous WebSocket synchronization.</p>
-  </div>
-  <div class="grid-3">
-    <div class="card feature-card">
-      <div class="icon">⚡</div>
-      <h3>Real-time, not polling</h3>
-      <p>Every ticket call, skip, or status change pushes instantaneously to every device screen using WebSockets — zero manual refresh required.</p>
-    </div>
-    <div class="card feature-card">
-      <div class="icon">📊</div>
-      <h3>Live analytics cockpit</h3>
-      <p>Campus administrators monitor busiest counters, peak traffic hours, and average processing wait times the second they occur.</p>
-    </div>
-    <div class="card feature-card">
-      <div class="icon">📱</div>
-      <h3>Dynamic QR check-in</h3>
-      <p>Every token includes an instant scannable QR pass, allowing students to reopen their position on any mobile phone seamlessly.</p>
-    </div>
-  </div>
-</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin: 1.25rem 0;">
+            <div class="neu-inset" style="padding: 0.85rem; text-align: center;">
+              <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">NOW SERVING</div>
+              <div style="font-size: 1.8rem; font-weight: 800; color: var(--qx-blue); font-family: var(--font-mono);">
+                {% if c['now_serving'] %}#{{ c['now_serving'] }}{% else %}—{% endif %}
+              </div>
+            </div>
 
-<div class="section">
-  <div class="section-head">
-    <div class="eyebrow" style="display:inline-block;">HOW IT WORKS</div>
-    <h2>Four steps, zero standing around</h2>
-  </div>
-  <div class="card">
-    <div class="timeline">
-      <div class="timeline-step">
-        <div class="timeline-num">01</div>
-        <h4>Fill your details</h4>
-        <p>Name, roll number, and your destination counter — takes under 20 seconds.</p>
+            <div class="neu-inset" style="padding: 0.85rem; text-align: center;">
+              <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">WAITING IN LINE</div>
+              <div style="font-size: 1.8rem; font-weight: 800; color: {% if c['waiting_count'] > 5 %}var(--danger){% else %}var(--success){% endif %}; font-family: var(--font-mono);">
+                {{ c['waiting_count'] }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <a href="{{ url_for('login', role='student') }}" class="neu-btn neu-btn-primary" style="width: 100%; font-size: 0.88rem;">
+            Join Virtual Queue &rarr;
+          </a>
+        </div>
       </div>
-      <div class="timeline-step">
-        <div class="timeline-num">02</div>
-        <h4>Receive live pass</h4>
-        <p>An instant digital ticket plus a scannable QR code to reopen your queue status anytime.</p>
+    {% else %}
+      <div class="neu-card" style="grid-column: 1 / -1; text-align: center; padding: 3rem; color: var(--text-muted);">
+        No active counters operating at this time.
       </div>
-      <div class="timeline-step">
-        <div class="timeline-num">03</div>
-        <h4>Track queue position</h4>
-        <p>Watch "Currently Serving" update dynamically while relaxing in the library or cafeteria.</p>
-      </div>
-      <div class="timeline-step">
-        <div class="timeline-num">04</div>
-        <h4>Walk in right on time</h4>
-        <p>Get a glowing alert and chime when your turn approaches, and step directly to the counter.</p>
-      </div>
-    </div>
+    {% endfor %}
   </div>
-</div>
 
-<div class="section">
-  <div class="stats-bar">
-    <div class="stat">
-      <div class="value">{{ counters|length }}</div>
-      <div class="label">Active Counters</div>
-    </div>
-    <div class="stat">
-      <div class="value">0s</div>
-      <div class="label">Refresh Delay</div>
-    </div>
-    <div class="stat">
-      <div class="value">24/7</div>
-      <div class="label">Token Access</div>
-    </div>
-  </div>
 </div>
-
-<div class="footer-note" style="padding-bottom:48px;">
-  QueueX — Skip the Queue. Save Your Time.
-</div>
-
-<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
-<script src="{{ url_for('static', filename='js/landing.js') }}"></script>
-<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
-</body>
-</html>
+{% endblock %}

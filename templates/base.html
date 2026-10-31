@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}QueueX{% endblock %} – Smart Virtual Queue System | CGC University Mohali</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+  <script>
+    // Theme sync script before DOM renders
+    (function() {
+      const theme = localStorage.getItem('qx_theme') || 'light';
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="qx-navbar">
+    <div class="nav-container">
+      <a href="{{ url_for('index') }}" class="brand-badge">
+        <div class="brand-logo">QX</div>
+        <div>
+          <div class="brand-title">QueueX</div>
+          <div class="brand-sub">CGC UNIVERSITY MOHALI</div>
+        </div>
+      </a>
+
+      <!-- Mobile Menu Button -->
+      <button class="mobile-toggle-btn neu-btn" onclick="toggleNav()" aria-label="Toggle menu">☰</button>
+
+      <nav>
+        <ul class="nav-links" id="nav-links">
+          <li class="nav-item"><a href="{{ url_for('index') }}">Live Counters</a></li>
+          
+          {% if session.get('user_id') %}
+            {% if session.get('user_role') == 'student' %}
+              <li class="nav-item"><a href="{{ url_for('student_portal') }}">Dashboard</a></li>
+              <li class="nav-item"><a href="{{ url_for('student_profile') }}">Profile</a></li>
+              <li class="nav-item"><a href="{{ url_for('student_settings') }}">Settings</a></li>
+            {% elif session.get('user_role') == 'operator' %}
+              <li class="nav-item"><a href="{{ url_for('operator_portal') }}">Counter Desk</a></li>
+              <li class="nav-item"><a href="{{ url_for('operator_profile') }}">Profile</a></li>
+              <li class="nav-item"><a href="{{ url_for('operator_settings') }}">Settings</a></li>
+            {% elif session.get('user_role') == 'admin' %}
+              <li class="nav-item"><a href="{{ url_for('admin_portal') }}">Dashboard</a></li>
+              <li class="nav-item"><a href="{{ url_for('admin_departments') }}">Departments</a></li>
+              <li class="nav-item"><a href="{{ url_for('admin_counters') }}">Counters</a></li>
+              <li class="nav-item"><a href="{{ url_for('admin_operators') }}">Operators</a></li>
+              <li class="nav-item"><a href="{{ url_for('admin_reports') }}">Reports</a></li>
+            {% endif %}
+
+            <!-- Theme Toggle Button -->
+            <li class="nav-item">
+              <button class="neu-btn" onclick="toggleTheme()" id="theme-btn" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;" title="Toggle Light/Dark Theme">
+                🌓
+              </button>
+            </li>
+
+            <li class="nav-item"><a href="{{ url_for('logout') }}" class="neu-btn neu-btn-danger" style="padding: 0.4rem 0.8rem; font-size: 0.82rem;">Sign Out</a></li>
+          {% else %}
+            <li class="nav-item">
+              <button class="neu-btn" onclick="toggleTheme()" id="theme-btn" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;" title="Toggle Light/Dark Theme">
+                🌓
+              </button>
+            </li>
+            <li class="nav-item"><a href="{{ url_for('login') }}" class="neu-btn neu-btn-primary" style="padding: 0.4rem 1rem; font-size: 0.85rem;">Sign In</a></li>
+            <li class="nav-item"><a href="{{ url_for('register') }}" class="neu-btn" style="padding: 0.4rem 1rem; font-size: 0.85rem;">Student Register</a></li>
+          {% endif %}
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Flash Messaging -->
+  <div class="flash-container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+  </div>
+
+  <!-- Main View -->
+  <main style="flex: 1;">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Footer -->
+  <footer class="qx-footer">
+    <div style="max-width: 1300px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+      <div style="text-align: left;">
+        <strong style="color: var(--qx-navy);">QueueX Smart Virtual Queue System</strong>
+        <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">CGC University, Landran, Mohali, Punjab 140307</p>
+      </div>
+      <div style="font-size: 0.8rem; color: var(--text-secondary);">
+        Central Helpdesk: <strong style="color: var(--qx-navy);">0172-3984200</strong>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    function toggleNav() {
+      const el = document.getElementById('nav-links');
+      if (el) el.classList.toggle('nav-open');
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('qx_theme', next);
+    }
+  </script>
+</body>
+</html>

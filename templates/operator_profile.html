@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Operator Profile – QueueX{% endblock %}
+
+{% block content %}
+<div class="app-layout">
+  
+  <aside class="app-sidebar">
+    <div class="sidebar-user">
+      <strong style="color: var(--qx-navy);">{{ operator['full_name'] }}</strong>
+      <span style="font-size: 0.78rem; color: var(--text-secondary);">Employee ID: {{ operator['identifier'] }}</span>
+      {% if counter %}
+        <span style="font-size: 0.75rem; color: var(--qx-blue); font-weight: 700; margin-top: 0.2rem;">
+          📍 {{ counter['code'] }}
+        </span>
+      {% endif %}
+    </div>
+
+    <a href="{{ url_for('operator_portal') }}" class="sidebar-link">🖥️ Counter Operations</a>
+    <a href="{{ url_for('operator_profile') }}" class="sidebar-link active">👤 Operator Profile</a>
+    <a href="{{ url_for('operator_settings') }}" class="sidebar-link">⚙️ Account Settings</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Board</a>
+    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+  </aside>
+
+  <main class="app-content">
+    
+    <div style="margin-bottom: 2rem;">
+      <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Operator Profile</h2>
+      <p style="font-size: 0.88rem; color: var(--text-secondary);">Officer details and assigned CGC counter desk allocation</p>
+    </div>
+
+    <div class="neu-card" style="max-width: 640px; padding: 2rem;">
+      <form method="POST" action="{{ url_for('operator_profile') }}">
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+          <div class="form-group">
+            <label class="form-label">Full Name *</label>
+            <input type="text" name="full_name" class="neu-input" value="{{ operator['full_name'] }}" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Employee ID</label>
+            <input type="text" class="neu-input" value="{{ operator['identifier'] }}" disabled style="opacity: 0.7;">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+          <div class="form-group">
+            <label class="form-label">Email Address</label>
+            <input type="email" class="neu-input" value="{{ operator['email'] }}" disabled style="opacity: 0.7;">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Phone Number</label>
+            <input type="tel" name="phone" class="neu-input" value="{{ operator['phone'] }}" placeholder="e.g. 9876543210">
+          </div>
+        </div>
+
+        <!-- Assigned Counter Desk Box -->
+        <div class="neu-inset" style="padding: 1.25rem; margin: 1.5rem 0;">
+          <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">
+            ASSIGNED COUNTER DESK
+          </div>
+          {% if counter %}
+            <div style="font-size: 1.2rem; font-weight: 800; color: var(--qx-navy); margin-top: 0.25rem;">
+              {{ counter['name'] }} ({{ counter['code'] }})
+            </div>
+            <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.2rem;">
+              Department: <strong>{{ counter['department_name'] }}</strong> • Location: {{ counter['building_block'] }}
+            </div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.35rem;">
+              Average Handling Target: <strong>{{ counter['avg_service_time_mins'] }} minutes</strong> / student
+            </div>
+          {% else %}
+            <div style="font-size: 0.95rem; color: var(--danger); font-weight: 600; margin-top: 0.25rem;">
+              No counter desk currently assigned.
+            </div>
+          {% endif %}
+        </div>
+
+        <div style="text-align: right;">
+          <button type="submit" class="neu-btn neu-btn-primary" style="padding: 0.75rem 2rem;">
+            Save Profile Details
+          </button>
+        </div>
+
+      </form>
+    </div>
+
+  </main>
+</div>
+{% endblock %}
