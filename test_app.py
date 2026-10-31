@@ -720,6 +720,99 @@ class QueueXComprehensiveTestCase(unittest.TestCase):
         self.assertEqual(sw_resp.status_code, 200)
         self.assertEqual(sw_resp.mimetype, "application/javascript")
 
+    def test_multi_tab_independent_authentication(self):
+        """
+        Verify that a single browser (shared cookie jar across tabs) can be logged in
+        simultaneously as Student, Operator, and Admin without overwriting each other.
+        Also verify that refreshing each portal retains role identity and logging out
+        from one role does not log out the other roles.
+        """
+        # Step 1: In the same client (simulating shared browser cookie jar), log in as Student
+        resp_st = self.client.post("/login", data={
+            "login_id": "student@cgc.edu.in",
+            "password": "Student@QueueX2026",
+            "role": "student"
+        }, follow_redirects=True)
+        self.assertEqual(resp_st.status_code, 200)
+        self.assertIn("Student Dashboard", resp_st.get_data(as_text=True))
+
+        # Step 2: In Tab 2, log in as Operator
+        resp_op = self.client.post("/login", data={
+            "login_id": "operator@cgc.edu.in",
+            "password": "Operator@QueueX2026",
+            "role": "operator"
+        }, follow_redirects=True)
+        self.assertEqual(resp_op.status_code, 200)
+        self.assertIn("Operator Dashboard", resp_op.get_data(as_text=True))
+
+        # Step 3: In Tab 3, log in as Admin
+        resp_adm = self.client.post("/login", data={
+            "login_id": "admin@cgc.edu.in",
+            "password": "Admin@QueueX2026",
+            "role": "admin"
+        }, follow_redirects=True)
+        self.assertEqual(resp_adm.status_code, 200)
+        self.assertIn("Central Admin Console", resp_adm.get_data(as_text=True))
+
+        # Step 4: Refresh / access Tab 1 (Student Dashboard) -> Should still be Student
+        refresh_st = self.client.get("/student/dashboard")
+        self.assertEqual(refresh_st.status_code, 200)
+        st_content = refresh_st.get_data(as_text=True)
+        self.assertIn("Student Dashboard", st_content)
+        self.assertIn("Aarav Sharma", st_content)  # Student name
+
+        # Step 5: Refresh / access Tab 2 (Operator Dashboard) -> Should still be Operator
+        refresh_op = self.client.get("/operator/dashboard")
+        self.assertEqual(refresh_op.status_code, 200)
+        op_content = refresh_op.get_data(as_text=True)
+        self.assertIn("Operator Dashboard", op_content)
+        self.assertIn("Accounts Counter Officer", op_content)
+
+        # Step 6: Refresh / access Tab 3 (Admin Dashboard) -> Should still be Admin
+        refresh_adm = self.client.get("/admin/dashboard")
+        self.assertEqual(refresh_adm.status_code, 200)
+        adm_content = refresh_adm.get_data(as_text=True)
+        self.assertIn("Central Admin Console", adm_content)
+        self.assertIn("CGC System Admin", adm_content)
+
+        # Step 7: Logout from Tab 1 (Student logout)
+        logout_st = self.client.get("/logout?role=student", follow_redirects=True)
+        self.assertEqual(logout_st.status_code, 200)
+
+        # Tab 1 should no longer have student session
+        with self.client.session_transaction() as sess:
+            self.assertNotIn("student", sess.get("roles", {}))
+
+        # Step 8: Tab 2 (Operator) and Tab 3 (Admin) must STILL be authenticated!
+        op_after_st_logout = self.client.get("/operator/dashboard")
+        self.assertEqual(op_after_st_logout.status_code, 200)
+        self.assertIn("Operator Dashboard", op_after_st_logout.get_data(as_text=True))
+        self.assertIn("Accounts Counter Officer", op_after_st_logout.get_data(as_text=True))
+
+        adm_after_st_logout = self.client.get("/admin/dashboard")
+        self.assertEqual(adm_after_st_logout.status_code, 200)
+        self.assertIn("Central Admin Console", adm_after_st_logout.get_data(as_text=True))
+        self.assertIn("CGC System Admin", adm_after_st_logout.get_data(as_text=True))
+
+        # Step 9: Logout Operator
+        logout_op = self.client.get("/logout?role=operator", follow_redirects=True)
+        self.assertEqual(logout_op.status_code, 200)
+        with self.client.session_transaction() as sess:
+            self.assertNotIn("operator", sess.get("roles", {}))
+
+        # Admin must STILL be authenticated
+        adm_after_op_logout = self.client.get("/admin/dashboard")
+        self.assertEqual(adm_after_op_logout.status_code, 200)
+        self.assertIn("Central Admin Console", adm_after_op_logout.get_data(as_text=True))
+        self.assertIn("CGC System Admin", adm_after_op_logout.get_data(as_text=True))
+
+        # Step 10: Logout Admin
+        logout_adm = self.client.get("/logout?role=admin", follow_redirects=True)
+        self.assertEqual(logout_adm.status_code, 200)
+        with self.client.session_transaction() as sess:
+            self.assertNotIn("admin", sess.get("roles", {}))
+            self.assertEqual(len(sess.get("roles", {})), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

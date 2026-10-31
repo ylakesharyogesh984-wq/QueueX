@@ -362,26 +362,127 @@ def init_db():
 
 
 # -------------------------------------------------------------
-# ROLE-BASED ACCESS CONTROL & CONTEXT
+# ROLE-BASED ACCESS CONTROL & MULTI-TAB SESSION ISOLATION
 # -------------------------------------------------------------
+
+def get_current_role():
+    """Determine role based on requested path prefix."""
+    path = request.path
+    if path.startswith("/admin"):
+        return "admin"
+    elif path.startswith("/operator"):
+        return "operator"
+    elif path.startswith("/student") or path.startswith("/api/student"):
+        return "student"
+    return session.get("last_active_role") or "student"
+
+
+def get_role_session(role=None):
+    """Retrieve the independent authenticated user session dictionary for the given role."""
+    target_role = role or get_current_role()
+    roles_dict = session.get("roles")
+    if isinstance(roles_dict, dict) and target_role in roles_dict:
+        return roles_dict[target_role]
+    # Backward compatibility with legacy unnested session keys
+    if session.get("user_role") == target_role and "user_id" in session:
+        return {
+            "user_id": session.get("user_id"),
+            "user_name": session.get("user_name"),
+            "user_email": session.get("user_email"),
+            "user_role": session.get("user_role"),
+            "user_identifier": session.get("user_identifier")
+        }
+    return None
+
+
+def get_current_user_id(role=None):
+    """Get the authenticated user ID scoped to the requested role or path."""
+    sess = get_role_session(role)
+    if sess and "user_id" in sess:
+        return sess["user_id"]
+    return session.get("user_id")
+
+
+def set_role_session(user):
+    """Store or update user login session partitioned by role."""
+    roles_dict = session.get("roles")
+    if not isinstance(roles_dict, dict):
+        roles_dict = {}
+
+    role = user["role"]
+    roles_dict[role] = {
+        "user_id": user["id"],
+        "user_name": user["full_name"],
+        "user_email": user["email"],
+        "user_role": role,
+        "user_identifier": user["identifier"]
+    }
+    session["roles"] = roles_dict
+    session["last_active_role"] = role
+
+    # Also keep top-level keys synced to the most recently active role for compatibility
+    session["user_id"] = user["id"]
+    session["user_name"] = user["full_name"]
+    session["user_email"] = user["email"]
+    session["user_role"] = role
+    session["user_identifier"] = user["identifier"]
+
+
+def clear_role_session(role=None):
+    """Clear session only for the specified role, preserving other active tabs."""
+    target_role = role or get_current_role()
+    roles_dict = session.get("roles")
+    if isinstance(roles_dict, dict) and target_role in roles_dict:
+        del roles_dict[target_role]
+        session["roles"] = roles_dict
+
+    # If the active top-level role matches the one being logged out, reset or switch top-level
+    if session.get("user_role") == target_role:
+        remaining_roles = session.get("roles") or {}
+        if remaining_roles:
+            # Switch top-level to another remaining active role
+            next_role, next_user = next(iter(remaining_roles.items()))
+            session["user_id"] = next_user["user_id"]
+            session["user_name"] = next_user["user_name"]
+            session["user_email"] = next_user["user_email"]
+            session["user_role"] = next_user["user_role"]
+            session["user_identifier"] = next_user["user_identifier"]
+            session["last_active_role"] = next_role
+        else:
+            session.pop("user_id", None)
+            session.pop("user_name", None)
+            session.pop("user_email", None)
+            session.pop("user_role", None)
+            session.pop("user_identifier", None)
+            session.pop("last_active_role", None)
+
 
 def login_required(role=None):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            if "user_id" not in session:
-                flash("Please log in to continue.", "warning")
-                return redirect(url_for("login"))
-            if role and session.get("user_role") != role:
-                flash("Unauthorized access for your account.", "danger")
-                user_role = session.get("user_role")
-                if user_role == "student":
-                    return redirect(url_for("student_portal"))
-                elif user_role == "operator":
-                    return redirect(url_for("operator_portal"))
-                elif user_role == "admin":
-                    return redirect(url_for("admin_portal"))
-                return redirect(url_for("login"))
+            target_role = role or get_current_role()
+            user_session = get_role_session(target_role)
+
+            if not user_session:
+                # If logged into another role, redirect them safely to their own portal with an alert
+                active_roles = session.get("roles") or {}
+                if active_roles:
+                    user_role = session.get("user_role") or next(iter(active_roles.keys()))
+                    flash("Unauthorized access for your account.", "danger")
+                    if user_role == "student":
+                        return redirect(url_for("student_portal"))
+                    elif user_role == "operator":
+                        return redirect(url_for("operator_portal"))
+                    elif user_role == "admin":
+                        return redirect(url_for("admin_portal"))
+
+                flash(f"Please log in as {target_role.capitalize()} to access this tab.", "warning")
+                return redirect(url_for("login", role=target_role))
+
+            # Set role-scoped session for context processor and handlers
+            session["last_active_role"] = target_role
+
             return f(*args, **kwargs)
         return decorated_function
     return decorator
@@ -389,21 +490,26 @@ def login_required(role=None):
 
 @app.context_processor
 def inject_common_context():
+    target_role = get_current_role()
+    user_sess = get_role_session(target_role) or {}
+
     unread_notifs = 0
-    if "user_id" in session:
+    uid = user_sess.get("user_id")
+    if uid:
         try:
             with db.get_db() as conn:
                 c = conn.cursor()
-                c.execute("SELECT COUNT(*) as cnt FROM notifications WHERE user_id = ? AND is_read = 0", (session["user_id"],))
+                c.execute("SELECT COUNT(*) as cnt FROM notifications WHERE user_id = ? AND is_read = 0", (uid,))
                 unread_notifs = c.fetchone()["cnt"]
         except Exception:
             unread_notifs = 0
 
     return {
-        "current_user": session.get("user_name"),
-        "current_role": session.get("user_role"),
-        "current_id": session.get("user_id"),
-        "current_identifier": session.get("user_identifier"),
+        "current_user": user_sess.get("user_name"),
+        "current_role": user_sess.get("user_role"),
+        "current_id": user_sess.get("user_id"),
+        "current_identifier": user_sess.get("user_identifier"),
+        "active_roles": session.get("roles", {}),
         "unread_notifications": unread_notifs,
         "now": datetime.datetime.now()
     }
@@ -494,6 +600,18 @@ def service_worker():
 
 @app.route("/")
 def index():
+    # If the user has active role sessions, let them navigate directly
+    roles_dict = session.get("roles") or {}
+    last_role = session.get("last_active_role")
+    
+    if last_role and last_role in roles_dict:
+        if last_role == "student":
+            return redirect(url_for("student_portal"))
+        elif last_role == "operator":
+            return redirect(url_for("operator_portal"))
+        elif last_role == "admin":
+            return redirect(url_for("admin_portal"))
+
     if "user_id" in session:
         role = session.get("user_role")
         if role == "student":
@@ -544,12 +662,8 @@ def login():
                 flash("Your account has been deactivated. Please contact administration.", "danger")
                 return render_template("login.html", role=role)
 
-            session.clear()
-            session["user_id"] = user["id"]
-            session["user_name"] = user["full_name"]
-            session["user_email"] = user["email"]
-            session["user_role"] = user["role"]
-            session["user_identifier"] = user["identifier"]
+            # Isolated role-based session setting (does not erase other tab role sessions!)
+            set_role_session(user)
 
             flash(f"Welcome to QueueX, {user['full_name']}!", "success")
             if user["role"] == "student":
@@ -613,9 +727,10 @@ def register():
 
 @app.route("/logout")
 def logout():
-    session.clear()
-    flash("You have been signed out successfully.", "info")
-    return redirect(url_for("login"))
+    role_to_logout = request.args.get("role") or get_current_role()
+    clear_role_session(role_to_logout)
+    flash(f"You have been signed out of {role_to_logout.capitalize()} portal.", "info")
+    return redirect(url_for("login", role=role_to_logout))
 
 
 # -------------------------------------------------------------
@@ -626,7 +741,7 @@ def logout():
 @app.route("/student/dashboard")
 @login_required(role="student")
 def student_portal():
-    student_id = session["user_id"]
+    student_id = get_current_user_id("student")
 
     with db.get_db() as conn:
         c = conn.cursor()
@@ -725,7 +840,7 @@ def student_portal():
 @app.route("/student/generate-token", methods=["POST"])
 @login_required(role="student")
 def student_generate_token():
-    student_id = session["user_id"]
+    student_id = get_current_user_id("student")
     counter_id = request.form.get("counter_id")
     service_reason = request.form.get("service_reason", "").strip()
 
@@ -803,7 +918,7 @@ def student_generate_token():
 @app.route("/student/token/<int:token_id>")
 @login_required(role="student")
 def student_token_status(token_id):
-    student_id = session["user_id"]
+    student_id = get_current_user_id("student")
 
     with db.get_db() as conn:
         c = conn.cursor()
@@ -858,7 +973,7 @@ def student_token_status(token_id):
 @login_required(role="student")
 def api_student_token_status(token_id):
     """Real-time JSON endpoint for client-side live queue polling."""
-    student_id = session["user_id"]
+    student_id = get_current_user_id("student")
     with db.get_db() as conn:
         c = conn.cursor()
         c.execute("""
@@ -902,7 +1017,7 @@ def api_student_token_status(token_id):
 @app.route("/student/token/cancel/<int:token_id>", methods=["POST"])
 @login_required(role="student")
 def student_cancel_token(token_id):
-    student_id = session["user_id"]
+    student_id = get_current_user_id("student")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
@@ -935,7 +1050,7 @@ def student_cancel_token(token_id):
 @app.route("/student/profile", methods=["GET", "POST"])
 @login_required(role="student")
 def student_profile():
-    student_id = session["user_id"]
+    student_id = get_current_user_id("student")
 
     with db.get_db() as conn:
         c = conn.cursor()
@@ -971,7 +1086,7 @@ def student_profile():
 @app.route("/student/settings", methods=["GET", "POST"])
 @login_required(role="student")
 def student_settings():
-    student_id = session["user_id"]
+    student_id = get_current_user_id("student")
 
     if request.method == "POST":
         action = request.form.get("action")
@@ -1022,7 +1137,7 @@ def student_settings():
 @app.route("/student/notifications/clear", methods=["POST"])
 @login_required(role="student")
 def clear_notifications():
-    student_id = session["user_id"]
+    student_id = get_current_user_id("student")
     with db.get_db() as conn:
         c = conn.cursor()
         c.execute("UPDATE notifications SET is_read = 1 WHERE user_id = ?", (student_id,))
@@ -1051,7 +1166,7 @@ def get_operator_counter(cursor, operator_id):
 @app.route("/operator/dashboard")
 @login_required(role="operator")
 def operator_portal():
-    operator_id = session["user_id"]
+    operator_id = get_current_user_id("operator")
 
     with db.get_db() as conn:
         c = conn.cursor()
@@ -1128,7 +1243,7 @@ def operator_portal():
 @app.route("/operator/call-next", methods=["POST"])
 @login_required(role="operator")
 def operator_call_next():
-    operator_id = session["user_id"]
+    operator_id = get_current_user_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
@@ -1206,7 +1321,7 @@ def operator_call_next():
 @app.route("/operator/complete/<int:token_id>", methods=["POST"])
 @login_required(role="operator")
 def operator_complete_token(token_id):
-    operator_id = session["user_id"]
+    operator_id = get_current_user_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
@@ -1260,7 +1375,7 @@ def operator_complete_token(token_id):
 @app.route("/operator/skip/<int:token_id>", methods=["POST"])
 @login_required(role="operator")
 def operator_skip_token(token_id):
-    operator_id = session["user_id"]
+    operator_id = get_current_user_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
@@ -1305,7 +1420,7 @@ def operator_skip_token(token_id):
 @app.route("/operator/recall/<int:token_id>", methods=["POST"])
 @login_required(role="operator")
 def operator_recall_token(token_id):
-    operator_id = session["user_id"]
+    operator_id = get_current_user_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
@@ -1360,7 +1475,7 @@ def operator_recall_token(token_id):
 @app.route("/operator/pause", methods=["POST"])
 @login_required(role="operator")
 def operator_pause_queue():
-    operator_id = session["user_id"]
+    operator_id = get_current_user_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
@@ -1386,7 +1501,7 @@ def operator_pause_queue():
 @app.route("/operator/resume", methods=["POST"])
 @login_required(role="operator")
 def operator_resume_queue():
-    operator_id = session["user_id"]
+    operator_id = get_current_user_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
@@ -1412,7 +1527,7 @@ def operator_resume_queue():
 @app.route("/operator/toggle-counter", methods=["POST"])
 @login_required(role="operator")
 def operator_toggle_counter():
-    operator_id = session["user_id"]
+    operator_id = get_current_user_id("operator")
     action = request.form.get("action")  # 'open' or 'close'
 
     with QUEUE_LOCK:
@@ -1440,7 +1555,7 @@ def operator_toggle_counter():
 @app.route("/operator/profile", methods=["GET", "POST"])
 @login_required(role="operator")
 def operator_profile():
-    operator_id = session["user_id"]
+    operator_id = get_current_user_id("operator")
 
     with db.get_db() as conn:
         c = conn.cursor()
@@ -1469,7 +1584,7 @@ def operator_profile():
 @app.route("/operator/settings", methods=["GET", "POST"])
 @login_required(role="operator")
 def operator_settings():
-    operator_id = session["user_id"]
+    operator_id = get_current_user_id("operator")
 
     if request.method == "POST":
         action = request.form.get("action")
@@ -1676,7 +1791,7 @@ def admin_department_create():
         c.execute("""
             INSERT INTO audit_logs (action, user_id, user_role, details)
             VALUES ('CREATE_DEPARTMENT', ?, 'admin', ?)
-        """, (session["user_id"], f"Created department {name} ({code})"))
+        """, (get_current_user_id("admin"), f"Created department {name} ({code})"))
         conn.commit()
 
     flash(f"Department '{name}' created successfully.", "success")
@@ -1706,7 +1821,7 @@ def admin_department_edit(dept_id):
         c.execute("""
             INSERT INTO audit_logs (action, user_id, user_role, details)
             VALUES ('EDIT_DEPARTMENT', ?, 'admin', ?)
-        """, (session["user_id"], f"Updated department ID {dept_id} ({name})"))
+        """, (get_current_user_id("admin"), f"Updated department ID {dept_id} ({name})"))
         conn.commit()
 
     flash("Department updated successfully.", "success")
@@ -1729,7 +1844,7 @@ def admin_department_toggle(dept_id):
         c.execute("""
             INSERT INTO audit_logs (action, user_id, user_role, details)
             VALUES ('TOGGLE_DEPARTMENT', ?, 'admin', ?)
-        """, (session["user_id"], f"Toggled department {dept['name']} active state to {new_status}"))
+        """, (get_current_user_id("admin"), f"Toggled department {dept['name']} active state to {new_status}"))
         conn.commit()
 
     flash(f"Department '{dept['name']}' status changed.", "info")
@@ -1803,7 +1918,7 @@ def admin_counter_create():
         c.execute("""
             INSERT INTO audit_logs (action, user_id, user_role, details)
             VALUES ('CREATE_COUNTER', ?, 'admin', ?)
-        """, (session["user_id"], f"Created counter {name} ({code})"))
+        """, (get_current_user_id("admin"), f"Created counter {name} ({code})"))
         conn.commit()
 
     flash(f"Counter '{name}' added successfully.", "success")
@@ -1838,7 +1953,7 @@ def admin_counter_edit(counter_id):
         c.execute("""
             INSERT INTO audit_logs (action, user_id, user_role, details)
             VALUES ('EDIT_COUNTER', ?, 'admin', ?)
-        """, (session["user_id"], f"Updated counter ID {counter_id} ({name})"))
+        """, (get_current_user_id("admin"), f"Updated counter ID {counter_id} ({name})"))
         conn.commit()
 
     flash("Counter updated successfully.", "success")
@@ -1870,7 +1985,7 @@ def admin_counter_action(counter_id):
         c.execute("""
             INSERT INTO audit_logs (action, user_id, user_role, details)
             VALUES (?, ?, 'admin', ?)
-        """, (f"ADMIN_COUNTER_{action.upper()}", session["user_id"], f"Admin set Counter {counter['code']} to {action}"))
+        """, (f"ADMIN_COUNTER_{action.upper()}", get_current_user_id("admin"), f"Admin set Counter {counter['code']} to {action}"))
         conn.commit()
 
     flash(f"Counter {counter['name']} is now updated ({action}).", "info")
@@ -1946,7 +2061,7 @@ def admin_operator_create():
         c.execute("""
             INSERT INTO audit_logs (action, user_id, user_role, details)
             VALUES ('CREATE_OPERATOR', ?, 'admin', ?)
-        """, (session["user_id"], f"Created operator {full_name} ({identifier})"))
+        """, (get_current_user_id("admin"), f"Created operator {full_name} ({identifier})"))
         conn.commit()
 
     flash(f"Operator account created for {full_name}.", "success")
@@ -1971,7 +2086,7 @@ def admin_operator_assign(operator_id):
         c.execute("""
             INSERT INTO audit_logs (action, user_id, user_role, details)
             VALUES ('REASSIGN_OPERATOR', ?, 'admin', ?)
-        """, (session.get("user_id"), f"Reassigned operator ID {operator_id} to counter ID {counter_id}"))
+        """, (get_current_user_id("admin"), f"Reassigned operator ID {operator_id} to counter ID {counter_id}"))
         conn.commit()
 
     flash("Operator desk assignment updated.", "success")
@@ -1999,7 +2114,7 @@ def admin_operator_toggle(operator_id):
         c.execute("""
             INSERT INTO audit_logs (action, user_id, user_role, details)
             VALUES ('TOGGLE_OPERATOR_STATUS', ?, 'admin', ?)
-        """, (session["user_id"], f"Set operator {op['full_name']} active state to {new_status}"))
+        """, (get_current_user_id("admin"), f"Set operator {op['full_name']} active state to {new_status}"))
         conn.commit()
 
     flash(f"Operator {op['full_name']} account status changed.", "info")

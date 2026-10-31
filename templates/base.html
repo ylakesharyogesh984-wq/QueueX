@@ -36,16 +36,17 @@
         <ul class="nav-links" id="nav-links">
           <li class="nav-item"><a href="{{ url_for('index') }}">Live Counters</a></li>
           
-          {% if session.get('user_id') %}
-            {% if session.get('user_role') == 'student' %}
+          {% set current_portal_role = current_role or session.get('user_role') %}
+          {% if current_id or session.get('user_id') %}
+            {% if current_portal_role == 'student' %}
               <li class="nav-item"><a href="{{ url_for('student_portal') }}">Dashboard</a></li>
               <li class="nav-item"><a href="{{ url_for('student_profile') }}">Profile</a></li>
               <li class="nav-item"><a href="{{ url_for('student_settings') }}">Settings</a></li>
-            {% elif session.get('user_role') == 'operator' %}
+            {% elif current_portal_role == 'operator' %}
               <li class="nav-item"><a href="{{ url_for('operator_portal') }}">Counter Desk</a></li>
               <li class="nav-item"><a href="{{ url_for('operator_profile') }}">Profile</a></li>
               <li class="nav-item"><a href="{{ url_for('operator_settings') }}">Settings</a></li>
-            {% elif session.get('user_role') == 'admin' %}
+            {% elif current_portal_role == 'admin' %}
               <li class="nav-item"><a href="{{ url_for('admin_portal') }}">Dashboard</a></li>
               <li class="nav-item"><a href="{{ url_for('admin_departments') }}">Departments</a></li>
               <li class="nav-item"><a href="{{ url_for('admin_counters') }}">Counters</a></li>
@@ -60,7 +61,7 @@
               </button>
             </li>
 
-            <li class="nav-item"><a href="{{ url_for('logout') }}" class="neu-btn neu-btn-danger" style="padding: 0.4rem 0.8rem; font-size: 0.82rem;">Sign Out</a></li>
+            <li class="nav-item"><a href="{{ url_for('logout', role=current_portal_role) }}" class="neu-btn neu-btn-danger" style="padding: 0.4rem 0.8rem; font-size: 0.82rem;">Sign Out</a></li>
           {% else %}
             <li class="nav-item">
               <button class="neu-btn" onclick="toggleTheme()" id="theme-btn" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;" title="Toggle Light/Dark Theme">
