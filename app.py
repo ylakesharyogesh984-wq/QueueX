@@ -319,7 +319,27 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_role ON auth_sessions (session_token, role);")
         conn.commit()
 
-        # 11. Seed initial demo departments (General-purpose multi-organization counters)
+        # 11. Seed / Migrate initial demo departments to generic SaaS sample data
+        # Safe migration: If existing departments still have legacy university names, update their labels & locations in-place
+        legacy_dept_renames = [
+            ("ACCOUNTS", "Billing & Financial Services", "Payments, invoices, fee settlement, and accounts verification", "Tower A Ground Floor"),
+            ("REGISTRAR", "Customer Records & Documentation", "Identity verification, certifications, transcripts, and credentials", "Main Hall Room 101"),
+            ("LIBRARY", "Knowledge Base & Resource Desk", "Resource access, information clearance, and account verification", "Central Resource Hub"),
+            ("EXAMINATION", "Audit, Review & Certification Cell", "Application processing, clearances, and verified records", "Tower B 1st Floor"),
+            ("CRC", "Client Relations & Corporate Accounts", "Corporate verification, onboarding, and partner services", "Executive Tower Suite 300"),
+            ("HOSTEL", "Facilities & Logistics Desk", "Facility access, pass issuance, logistics clearances", "Operations Desk Room 10"),
+        ]
+        for d_code, d_name, d_desc, d_bldg in legacy_dept_renames:
+            c.execute("""
+                UPDATE departments
+                SET name = ?, description = ?, building_block = ?
+                WHERE code = ? AND (
+                    name LIKE '%University%' OR name LIKE '%Hostel%' OR name LIKE '%Placement%' 
+                    OR name LIKE '%Examination%' OR building_block LIKE '%Block%'
+                )
+            """, (d_name, d_desc, d_bldg, d_code))
+        conn.commit()
+
         c.execute("SELECT COUNT(*) as cnt FROM departments")
         if c.fetchone()["cnt"] == 0:
             default_departments = [
@@ -336,6 +356,27 @@ def init_db():
                     VALUES (?, ?, ?, ?)
                 """, (code, name, desc, bldg))
             conn.commit()
+
+        # Update legacy counter names to generic SaaS equivalents where appropriate
+        legacy_counter_renames = [
+            ("ACCOUNTS-W1", "Billing & Payment Window 1"),
+            ("ACCOUNTS-W2", "Accounts & Invoicing Desk 2"),
+            ("REG-W1", "Customer Records Verification 1"),
+            ("REG-W2", "Certificates & Clearance Desk 2"),
+            ("LIB-W1", "Information & Resource Desk 1"),
+            ("EXAM-W1", "Verification & Audits Desk 1"),
+            ("CRC-W1", "Corporate Onboarding & Partner Desk 1"),
+        ]
+        for c_code, c_name in legacy_counter_renames:
+            c.execute("""
+                UPDATE counters
+                SET name = ?
+                WHERE code = ? AND (
+                    name LIKE '%Scholarship%' OR name LIKE '%Bonafide%' OR name LIKE '%Admit Card%'
+                    OR name LIKE '%Placement NOC%' OR name LIKE '%Circulation%'
+                )
+            """, (c_name, c_code))
+        conn.commit()
 
         # 12. Seed initial counters (only if empty)
         c.execute("SELECT COUNT(*) as cnt FROM counters")
@@ -376,7 +417,7 @@ def init_db():
         else:
             c.execute("""
                 UPDATE users
-                SET password_hash = ?, role = 'admin', identifier = 'ADM001', is_active = 1
+                SET password_hash = ?, role = 'admin', identifier = 'ADM001', full_name = 'Central Queue Administrator', is_active = 1
                 WHERE id = ?
             """, (admin_pw_hash, adm_row["id"]))
         conn.commit()
@@ -393,7 +434,7 @@ def init_db():
         else:
             c.execute("""
                 UPDATE users
-                SET password_hash = ?, role = 'operator', identifier = 'OP101', is_active = 1
+                SET password_hash = ?, role = 'operator', identifier = 'OP101', full_name = 'Service Counter Officer', is_active = 1
                 WHERE id = ?
             """, (op_pw_hash, op_row["id"]))
         c.execute("UPDATE counters SET assigned_operator_id = (SELECT id FROM users WHERE email IN ('operator@cgc.edu.in', 'operator@queuex.io') LIMIT 1) WHERE id = 1")
@@ -746,10 +787,11 @@ def health_check():
             c.execute("SELECT 1")
             c.fetchone()
         uptime = (datetime.datetime.now(datetime.timezone.utc) - APP_START_TIME).total_seconds()
+        org_settings = get_organization_settings()
         return jsonify({
             "status": "healthy",
             "system": "QueueX Smart Virtual Queue System",
-            "campus": "CGC University, Mohali, Punjab",
+            "organization": org_settings.get("org_name", "Global Service Center"),
             "database": "connected",
             "engine": "postgresql" if db.is_postgres() else "sqlite",
             "uptime_seconds": round(uptime, 2)
