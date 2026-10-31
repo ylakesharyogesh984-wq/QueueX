@@ -228,6 +228,14 @@ def init_db():
         """)
         conn.commit()
 
+        # Migrate notifications columns if upgrading from legacy schema
+        db.add_column_if_missing(c, "notifications", "user_id", "INTEGER DEFAULT 1")
+        db.add_column_if_missing(c, "notifications", "title", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "notifications", "message", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "notifications", "is_read", "INTEGER DEFAULT 0")
+        db.add_column_if_missing(c, "notifications", "created_at", "TIMESTAMP")
+        conn.commit()
+
         # 7. System Audit Log
         c.execute("""
             CREATE TABLE IF NOT EXISTS audit_logs (
@@ -239,6 +247,14 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.commit()
+
+        # Migrate audit_logs columns if upgrading from legacy schema
+        db.add_column_if_missing(c, "audit_logs", "action", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "audit_logs", "user_id", "INTEGER DEFAULT NULL")
+        db.add_column_if_missing(c, "audit_logs", "user_role", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "audit_logs", "details", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "audit_logs", "created_at", "TIMESTAMP")
         conn.commit()
 
         # 8. Performance Indexes (now safely run after column migrations)
@@ -1930,7 +1946,8 @@ def admin_operator_create():
 @app.route("/admin/operators/assign/<int:operator_id>", methods=["POST"])
 @login_required(role="admin")
 def admin_operator_assign(operator_id):
-    counter_id = request.form.get("counter_id")  # Can be empty for unassign
+    raw_counter_id = request.form.get("counter_id", "").strip()
+    counter_id = int(raw_counter_id) if raw_counter_id and raw_counter_id.isdigit() else None
 
     with db.get_db() as conn:
         c = conn.cursor()
@@ -1944,7 +1961,7 @@ def admin_operator_assign(operator_id):
         c.execute("""
             INSERT INTO audit_logs (action, user_id, user_role, details)
             VALUES ('REASSIGN_OPERATOR', ?, 'admin', ?)
-        """, (session["user_id"], f"Reassigned operator ID {operator_id} to counter ID {counter_id}"))
+        """, (session.get("user_id"), f"Reassigned operator ID {operator_id} to counter ID {counter_id}"))
         conn.commit()
 
     flash("Operator desk assignment updated.", "success")
