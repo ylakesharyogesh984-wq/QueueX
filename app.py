@@ -73,10 +73,67 @@ def init_db():
     with db.get_db() as conn:
         c = conn.cursor()
 
+        # 0. Organizations table (Multi-Tenant SaaS Foundation)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS organizations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                subtitle TEXT DEFAULT '',
+                tagline TEXT DEFAULT '',
+                address TEXT DEFAULT '',
+                support_email TEXT DEFAULT '',
+                support_phone TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+
+        db.add_column_if_missing(c, "organizations", "slug", "TEXT")
+        db.add_column_if_missing(c, "organizations", "name", "TEXT")
+        db.add_column_if_missing(c, "organizations", "subtitle", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "organizations", "tagline", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "organizations", "address", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "organizations", "support_email", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "organizations", "support_phone", "TEXT DEFAULT ''")
+        db.add_column_if_missing(c, "organizations", "created_at", "TIMESTAMP")
+        conn.commit()
+
+        # Seed default tenant (ID 1) if organizations table is empty
+        c.execute("SELECT COUNT(*) as cnt FROM organizations")
+        if c.fetchone()["cnt"] == 0:
+            c.execute("""
+                INSERT INTO organizations (id, slug, name, subtitle, tagline, address, support_email, support_phone)
+                VALUES (1, 'default', 'Global Service Center', 'Smart Digital Queue & Service Management',
+                        'Real-Time Digital Queue Tracking & Service Excellence',
+                        'Central Headquarters • Main Executive Tower',
+                        'support@queuex.io', '+1 (800) 555-0199')
+            """)
+            conn.commit()
+
+        # Seed Test Tenants Org A (Global Healthcare) & Org B (City Service Center)
+        test_orgs = [
+            (2, 'global-health', 'Global Healthcare', 'Hospital Outpatient & Clinic Services',
+             'Compassionate Care Without The Waiting Lines', 'Medical City Block A • West Wing',
+             'care@globalhealth.org', '+1 (800) 444-0122'),
+            (3, 'city-service', 'City Service Center', 'Municipal Public Services & Licensing Hub',
+             'Fast, Transparent Citizen Services', 'City Hall Plaza • South Concourse',
+             'citizens@cityservice.gov', '+1 (800) 333-0177')
+        ]
+        for org_id, o_slug, o_name, o_sub, o_tag, o_addr, o_email, o_phone in test_orgs:
+            c.execute("SELECT id FROM organizations WHERE id = ? OR slug = ?", (org_id, o_slug))
+            if not c.fetchone():
+                c.execute("""
+                    INSERT INTO organizations (id, slug, name, subtitle, tagline, address, support_email, support_phone)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (org_id, o_slug, o_name, o_sub, o_tag, o_addr, o_email, o_phone))
+                conn.commit()
+
         # 1. Departments table (MUST precede counters)
         c.execute("""
             CREATE TABLE IF NOT EXISTS departments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL DEFAULT 1,
                 code TEXT UNIQUE NOT NULL,
                 name TEXT NOT NULL,
                 description TEXT DEFAULT '',
@@ -88,6 +145,7 @@ def init_db():
         conn.commit()
 
         # Migrate departments columns if existing table lacked any
+        db.add_column_if_missing(c, "departments", "organization_id", "INTEGER DEFAULT 1")
         db.add_column_if_missing(c, "departments", "code", "TEXT")
         db.add_column_if_missing(c, "departments", "name", "TEXT")
         db.add_column_if_missing(c, "departments", "description", "TEXT DEFAULT ''")
@@ -100,6 +158,7 @@ def init_db():
         c.execute("""
             CREATE TABLE IF NOT EXISTS counters (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL DEFAULT 1,
                 department_id INTEGER NOT NULL DEFAULT 1,
                 name TEXT NOT NULL,
                 code TEXT UNIQUE,
@@ -113,6 +172,7 @@ def init_db():
         conn.commit()
 
         # Migrate counters columns if upgrading from earlier schema
+        db.add_column_if_missing(c, "counters", "organization_id", "INTEGER DEFAULT 1")
         db.add_column_if_missing(c, "counters", "department_id", "INTEGER DEFAULT 1")
         db.add_column_if_missing(c, "counters", "name", "TEXT")
         db.add_column_if_missing(c, "counters", "code", "TEXT")
@@ -127,6 +187,7 @@ def init_db():
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL DEFAULT 1,
                 email TEXT UNIQUE,
                 password_hash TEXT,
                 full_name TEXT NOT NULL,
@@ -143,6 +204,7 @@ def init_db():
         conn.commit()
 
         # Migrate users columns if upgrading from earlier schema
+        db.add_column_if_missing(c, "users", "organization_id", "INTEGER DEFAULT 1")
         db.add_column_if_missing(c, "users", "email", "TEXT")
         db.add_column_if_missing(c, "users", "password_hash", "TEXT")
         db.add_column_if_missing(c, "users", "full_name", "TEXT")
@@ -168,6 +230,7 @@ def init_db():
         c.execute("""
             CREATE TABLE IF NOT EXISTS tokens (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL DEFAULT 1,
                 token_number INTEGER NOT NULL,
                 counter_id INTEGER NOT NULL DEFAULT 1,
                 department_id INTEGER NOT NULL DEFAULT 1,
@@ -186,6 +249,7 @@ def init_db():
         conn.commit()
 
         # Migrate tokens columns if upgrading from earlier schema
+        db.add_column_if_missing(c, "tokens", "organization_id", "INTEGER DEFAULT 1")
         db.add_column_if_missing(c, "tokens", "token_number", "INTEGER DEFAULT 1")
         db.add_column_if_missing(c, "tokens", "counter_id", "INTEGER DEFAULT 1")
         db.add_column_if_missing(c, "tokens", "department_id", "INTEGER DEFAULT 1")
@@ -205,6 +269,7 @@ def init_db():
         c.execute("""
             CREATE TABLE IF NOT EXISTS feedback (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL DEFAULT 1,
                 token_id INTEGER UNIQUE,
                 student_id INTEGER NOT NULL DEFAULT 1,
                 counter_id INTEGER NOT NULL DEFAULT 1,
@@ -214,11 +279,14 @@ def init_db():
             )
         """)
         conn.commit()
+        db.add_column_if_missing(c, "feedback", "organization_id", "INTEGER DEFAULT 1")
+        conn.commit()
 
         # 6. System Notifications
         c.execute("""
             CREATE TABLE IF NOT EXISTS notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL DEFAULT 1,
                 user_id INTEGER NOT NULL,
                 title TEXT NOT NULL,
                 message TEXT NOT NULL,
@@ -229,6 +297,7 @@ def init_db():
         conn.commit()
 
         # Migrate notifications columns if upgrading from legacy schema
+        db.add_column_if_missing(c, "notifications", "organization_id", "INTEGER DEFAULT 1")
         db.add_column_if_missing(c, "notifications", "user_id", "INTEGER DEFAULT 1")
         db.add_column_if_missing(c, "notifications", "title", "TEXT DEFAULT ''")
         db.add_column_if_missing(c, "notifications", "message", "TEXT DEFAULT ''")
@@ -240,6 +309,7 @@ def init_db():
         c.execute("""
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL DEFAULT 1,
                 action TEXT NOT NULL,
                 user_id INTEGER DEFAULT NULL,
                 user_role TEXT DEFAULT '',
@@ -250,6 +320,7 @@ def init_db():
         conn.commit()
 
         # Migrate audit_logs columns if upgrading from legacy schema
+        db.add_column_if_missing(c, "audit_logs", "organization_id", "INTEGER DEFAULT 1")
         db.add_column_if_missing(c, "audit_logs", "action", "TEXT DEFAULT ''")
         db.add_column_if_missing(c, "audit_logs", "user_id", "INTEGER DEFAULT NULL")
         db.add_column_if_missing(c, "audit_logs", "user_role", "TEXT DEFAULT ''")
@@ -261,6 +332,7 @@ def init_db():
         c.execute("""
             CREATE TABLE IF NOT EXISTS auth_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL DEFAULT 1,
                 session_token TEXT NOT NULL,
                 role TEXT NOT NULL,
                 user_id INTEGER NOT NULL,
@@ -276,6 +348,7 @@ def init_db():
         conn.commit()
 
         # Migrate auth_sessions columns if upgrading
+        db.add_column_if_missing(c, "auth_sessions", "organization_id", "INTEGER DEFAULT 1")
         db.add_column_if_missing(c, "auth_sessions", "session_token", "TEXT")
         db.add_column_if_missing(c, "auth_sessions", "role", "TEXT")
         db.add_column_if_missing(c, "auth_sessions", "user_id", "INTEGER")
@@ -291,10 +364,13 @@ def init_db():
         c.execute("""
             CREATE TABLE IF NOT EXISTS organization_settings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT UNIQUE NOT NULL,
+                organization_id INTEGER NOT NULL DEFAULT 1,
+                key TEXT NOT NULL,
                 value TEXT NOT NULL
             )
         """)
+        conn.commit()
+        db.add_column_if_missing(c, "organization_settings", "organization_id", "INTEGER DEFAULT 1")
         conn.commit()
 
         # Seed default general-purpose SaaS organization settings if empty
@@ -411,13 +487,13 @@ def init_db():
         admin_pw_hash = generate_password_hash("Admin@QueueX2026")
         if not adm_row:
             c.execute("""
-                INSERT INTO users (email, password_hash, full_name, role, identifier, phone, is_active)
-                VALUES ('admin@cgc.edu.in', ?, 'Central Queue Administrator', 'admin', 'ADM001', '0172-3984200', 1)
+                INSERT INTO users (organization_id, email, password_hash, full_name, role, identifier, phone, is_active)
+                VALUES (1, 'admin@cgc.edu.in', ?, 'Central Queue Administrator', 'admin', 'ADM001', '0172-3984200', 1)
             """, (admin_pw_hash,))
         else:
             c.execute("""
                 UPDATE users
-                SET password_hash = ?, role = 'admin', identifier = 'ADM001', full_name = 'Central Queue Administrator', is_active = 1
+                SET organization_id = 1, password_hash = ?, role = 'admin', identifier = 'ADM001', full_name = 'Central Queue Administrator', is_active = 1
                 WHERE id = ?
             """, (admin_pw_hash, adm_row["id"]))
         conn.commit()
@@ -428,13 +504,13 @@ def init_db():
         op_pw_hash = generate_password_hash("Operator@QueueX2026")
         if not op_row:
             c.execute("""
-                INSERT INTO users (email, password_hash, full_name, role, identifier, phone, is_active)
-                VALUES ('operator@cgc.edu.in', ?, 'Service Counter Officer', 'operator', 'OP101', '9876543210', 1)
+                INSERT INTO users (organization_id, email, password_hash, full_name, role, identifier, phone, is_active)
+                VALUES (1, 'operator@cgc.edu.in', ?, 'Service Counter Officer', 'operator', 'OP101', '9876543210', 1)
             """, (op_pw_hash,))
         else:
             c.execute("""
                 UPDATE users
-                SET password_hash = ?, role = 'operator', identifier = 'OP101', full_name = 'Service Counter Officer', is_active = 1
+                SET organization_id = 1, password_hash = ?, role = 'operator', identifier = 'OP101', full_name = 'Service Counter Officer', is_active = 1
                 WHERE id = ?
             """, (op_pw_hash, op_row["id"]))
         c.execute("UPDATE counters SET assigned_operator_id = (SELECT id FROM users WHERE email IN ('operator@cgc.edu.in', 'operator@queuex.io') LIMIT 1) WHERE id = 1")
@@ -446,13 +522,13 @@ def init_db():
         st_pw_hash = generate_password_hash("Student@QueueX2026")
         if not st_row:
             c.execute("""
-                INSERT INTO users (email, password_hash, full_name, role, identifier, phone, department, course, semester, is_active)
-                VALUES ('student@cgc.edu.in', ?, 'Aarav Sharma', 'student', '2201045', '9812345678', 'General', 'Client', 1, 1)
+                INSERT INTO users (organization_id, email, password_hash, full_name, role, identifier, phone, department, course, semester, is_active)
+                VALUES (1, 'student@cgc.edu.in', ?, 'Aarav Sharma', 'student', '2201045', '9812345678', 'General', 'Client', 1, 1)
             """, (st_pw_hash,))
         else:
             c.execute("""
                 UPDATE users
-                SET password_hash = ?, role = 'student', identifier = '2201045', is_active = 1
+                SET organization_id = 1, password_hash = ?, role = 'student', identifier = '2201045', is_active = 1
                 WHERE id = ?
             """, (st_pw_hash, st_row["id"]))
         conn.commit()
@@ -512,7 +588,7 @@ def get_current_role():
 def get_role_session(role=None):
     """
     Retrieve the independent authenticated user session dictionary for the given role
-    directly from the PostgreSQL/SQLite server-side auth_sessions store.
+    directly from the PostgreSQL/SQLite auth_sessions store, including multi-tenant organization_id.
     """
     target_role = role or get_current_role()
     session_token = get_or_create_browser_session_token()
@@ -522,7 +598,7 @@ def get_role_session(role=None):
         with db.get_db() as conn:
             c = conn.cursor()
             c.execute("""
-                SELECT user_id, user_name, user_email, role as user_role, user_identifier, expires_at
+                SELECT user_id, user_name, user_email, role as user_role, user_identifier, organization_id, expires_at
                 FROM auth_sessions
                 WHERE session_token = ? AND role = ?
             """, (session_token, target_role))
@@ -545,12 +621,18 @@ def get_role_session(role=None):
                     exp_dt = exp_dt.replace(tzinfo=None)
 
                 if exp_dt > now_dt:
+                    org_val = None
+                    try:
+                        org_val = row["organization_id"]
+                    except (IndexError, KeyError):
+                        org_val = 1
                     return {
                         "user_id": row["user_id"],
                         "user_name": row["user_name"],
                         "user_email": row["user_email"],
                         "user_role": row["user_role"],
-                        "user_identifier": row["user_identifier"]
+                        "user_identifier": row["user_identifier"],
+                        "organization_id": org_val if org_val is not None else 1
                     }
                 else:
                     # Expired session: prune
@@ -571,7 +653,7 @@ def get_all_active_role_sessions():
         with db.get_db() as conn:
             c = conn.cursor()
             c.execute("""
-                SELECT user_id, user_name, user_email, role as user_role, user_identifier, expires_at
+                SELECT user_id, user_name, user_email, role as user_role, user_identifier, organization_id, expires_at
                 FROM auth_sessions
                 WHERE session_token = ?
             """, (session_token,))
@@ -591,12 +673,18 @@ def get_all_active_role_sessions():
                     exp_dt = exp_dt.replace(tzinfo=None)
 
                 if exp_dt > now_dt:
+                    org_val = None
+                    try:
+                        org_val = r["organization_id"]
+                    except (IndexError, KeyError):
+                        org_val = 1
                     active[r["user_role"]] = {
                         "user_id": r["user_id"],
                         "user_name": r["user_name"],
                         "user_email": r["user_email"],
                         "user_role": r["user_role"],
-                        "user_identifier": r["user_identifier"]
+                        "user_identifier": r["user_identifier"],
+                        "organization_id": org_val if org_val is not None else 1
                     }
     except Exception as e:
         app.logger.warning(f"Error fetching active sessions: {e}")
@@ -611,31 +699,74 @@ def get_current_user_id(role=None):
     return None
 
 
+def get_current_org_id(role=None):
+    """
+    Resolve the current multi-tenant organization ID.
+    Priority:
+    1. Authenticated role session organization_id
+    2. URL query/form parameter (e.g. ?org_id=2 or ?org=global-health)
+    3. Cookie / Header 'X-Organization-Id'
+    4. Default organization (ID 1)
+    """
+    sess = get_role_session(role)
+    if sess and sess.get("organization_id"):
+        return int(sess["organization_id"])
+
+    # Check request query/form
+    req_org = request.args.get("org_id") or request.form.get("org_id")
+    if req_org and str(req_org).isdigit():
+        return int(req_org)
+
+    slug = request.args.get("org")
+    if slug:
+        try:
+            with db.get_db() as conn:
+                c = conn.cursor()
+                c.execute("SELECT id FROM organizations WHERE slug = ?", (slug,))
+                row = c.fetchone()
+                if row:
+                    return int(row["id"])
+        except Exception:
+            pass
+
+    # Check header
+    hdr_org = request.headers.get("X-Organization-Id")
+    if hdr_org and str(hdr_org).isdigit():
+        return int(hdr_org)
+
+    return 1
+
+
 def set_role_session(user):
     """
     Store or update user login session atomically in PostgreSQL/SQLite auth_sessions table.
-    This guarantees that concurrent logins in different tabs cannot overwrite each other.
+    Ensures multi-tenant organization_id is bound securely to the session.
     """
     role = user["role"]
     session_token = get_or_create_browser_session_token()
     expires_at = datetime.datetime.now() + datetime.timedelta(days=SESSION_LIFETIME_DAYS)
+    try:
+        org_id = user["organization_id"]
+    except (IndexError, KeyError):
+        org_id = 1
+    if org_id is None:
+        org_id = 1
 
     with db.get_db() as conn:
         c = conn.cursor()
-        # Atomic upsert pattern: check existing role session for this browser token
         c.execute("SELECT id FROM auth_sessions WHERE session_token = ? AND role = ?", (session_token, role))
         existing = c.fetchone()
         if existing:
             c.execute("""
                 UPDATE auth_sessions
-                SET user_id = ?, user_name = ?, user_email = ?, user_identifier = ?, last_active = CURRENT_TIMESTAMP, expires_at = ?
+                SET user_id = ?, user_name = ?, user_email = ?, user_identifier = ?, organization_id = ?, last_active = CURRENT_TIMESTAMP, expires_at = ?
                 WHERE id = ?
-            """, (user["id"], user["full_name"], user["email"], user["identifier"], expires_at, existing["id"]))
+            """, (user["id"], user["full_name"], user["email"], user["identifier"], org_id, expires_at, existing["id"]))
         else:
             c.execute("""
-                INSERT INTO auth_sessions (session_token, role, user_id, user_name, user_email, user_identifier, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (session_token, role, user["id"], user["full_name"], user["email"], user["identifier"], expires_at))
+                INSERT INTO auth_sessions (session_token, role, user_id, user_name, user_email, user_identifier, organization_id, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (session_token, role, user["id"], user["full_name"], user["email"], user["identifier"], org_id, expires_at))
         conn.commit()
 
 
@@ -680,8 +811,9 @@ def login_required(role=None):
     return decorator
 
 
-def get_organization_settings():
-    """Retrieve dynamic organization settings with sensible SaaS defaults."""
+def get_organization_settings(org_id=None):
+    """Retrieve dynamic organization settings with multi-tenant SaaS isolation."""
+    target_org_id = org_id or get_current_org_id()
     defaults = {
         "org_name": "Global Service Center",
         "org_subtitle": "Smart Digital Queue & Service Management",
@@ -693,7 +825,24 @@ def get_organization_settings():
     try:
         with db.get_db() as conn:
             c = conn.cursor()
-            c.execute("SELECT key, value FROM organization_settings")
+            # First check organizations table
+            c.execute("SELECT * FROM organizations WHERE id = ?", (target_org_id,))
+            org_row = c.fetchone()
+            if org_row:
+                defaults["org_name"] = org_row["name"]
+                if org_row["subtitle"]:
+                    defaults["org_subtitle"] = org_row["subtitle"]
+                if org_row["tagline"]:
+                    defaults["org_tagline"] = org_row["tagline"]
+                if org_row["address"]:
+                    defaults["org_address"] = org_row["address"]
+                if org_row["support_email"]:
+                    defaults["org_support_email"] = org_row["support_email"]
+                if org_row["support_phone"]:
+                    defaults["org_support_phone"] = org_row["support_phone"]
+
+            # Overlay custom organization_settings key-values scoped by organization_id
+            c.execute("SELECT key, value FROM organization_settings WHERE organization_id = ?", (target_org_id,))
             rows = c.fetchall()
             for r in rows:
                 defaults[r["key"]] = r["value"]
@@ -706,6 +855,7 @@ def get_organization_settings():
 def inject_common_context():
     target_role = get_current_role()
     user_sess = get_role_session(target_role) or {}
+    cur_org_id = get_current_org_id(target_role)
 
     unread_notifs = 0
     uid = user_sess.get("user_id")
@@ -723,10 +873,11 @@ def inject_common_context():
         "current_role": user_sess.get("user_role"),
         "current_id": user_sess.get("user_id"),
         "current_identifier": user_sess.get("user_identifier"),
+        "current_org_id": cur_org_id,
         "active_roles": get_all_active_role_sessions(),
         "unread_notifications": unread_notifs,
         "now": datetime.datetime.now(),
-        "org": get_organization_settings()
+        "org": get_organization_settings(cur_org_id)
     }
 
 
@@ -828,6 +979,7 @@ def index():
             elif req_role == "admin":
                 return redirect(url_for("admin_portal"))
 
+    cur_org_id = get_current_org_id()
     with db.get_db() as conn:
         c = conn.cursor()
         c.execute("""
@@ -836,9 +988,9 @@ def index():
                    (SELECT token_number FROM tokens t WHERE t.counter_id = c.id AND t.status = 'serving' LIMIT 1) as now_serving
             FROM counters c
             JOIN departments d ON d.id = c.department_id
-            WHERE c.is_active = 1
+            WHERE c.is_active = 1 AND c.organization_id = ?
             ORDER BY d.name, c.name
-        """)
+        """, (cur_org_id,))
         active_counters = c.fetchall()
 
     return render_template("index.html", counters=active_counters)
@@ -912,18 +1064,19 @@ def register():
             flash("Password must be at least 6 characters.", "danger")
             return render_template("register.html")
 
+        target_org_id = get_current_org_id()
         with db.get_db() as conn:
             c = conn.cursor()
-            c.execute("SELECT id FROM users WHERE email = ? OR identifier = ?", (email, roll_no))
+            c.execute("SELECT id FROM users WHERE (email = ? OR identifier = ?) AND organization_id = ?", (email, roll_no, target_org_id))
             if c.fetchone():
                 flash("An account with this Email or Roll Number already exists.", "danger")
                 return render_template("register.html")
 
             pw_hash = generate_password_hash(password)
             c.execute("""
-                INSERT INTO users (email, password_hash, full_name, role, identifier, phone, department, course, semester)
-                VALUES (?, ?, ?, 'student', ?, ?, ?, ?, ?)
-            """, (email, pw_hash, full_name, roll_no, phone, department, course, semester))
+                INSERT INTO users (organization_id, email, password_hash, full_name, role, identifier, phone, department, course, semester)
+                VALUES (?, ?, ?, ?, 'student', ?, ?, ?, ?, ?)
+            """, (target_org_id, email, pw_hash, full_name, roll_no, phone, department, course, semester))
             conn.commit()
 
         flash("Registration successful! You can now generate queue tokens.", "success")
@@ -949,12 +1102,13 @@ def logout():
 @login_required(role="student")
 def student_portal():
     student_id = get_current_user_id("student")
+    org_id = get_current_org_id("student")
 
     with db.get_db() as conn:
         c = conn.cursor()
 
         # 1. Fetch Student Details
-        c.execute("SELECT * FROM users WHERE id = ?", (student_id,))
+        c.execute("SELECT * FROM users WHERE id = ? AND organization_id = ?", (student_id, org_id))
         student = c.fetchone()
 
         # 2. Check for Active Token (status: 'waiting' or 'serving')
@@ -964,9 +1118,9 @@ def student_portal():
             FROM tokens t
             JOIN counters c ON c.id = t.counter_id
             JOIN departments d ON d.id = t.department_id
-            WHERE t.student_id = ? AND t.status IN ('waiting', 'serving')
+            WHERE t.student_id = ? AND t.organization_id = ? AND t.status IN ('waiting', 'serving')
             ORDER BY t.id DESC LIMIT 1
-        """, (student_id,))
+        """, (student_id, org_id))
         active_token = c.fetchone()
 
         active_meta = None
@@ -974,16 +1128,16 @@ def student_portal():
             # Calculate people ahead & estimated waiting time
             c.execute("""
                 SELECT COUNT(*) as count FROM tokens
-                WHERE counter_id = ? AND status = 'waiting' AND id < ?
-            """, (active_token["counter_id"], active_token["id"]))
+                WHERE counter_id = ? AND organization_id = ? AND status = 'waiting' AND id < ?
+            """, (active_token["counter_id"], org_id, active_token["id"]))
             people_ahead = c.fetchone()["count"]
 
             # Current serving token at counter
             c.execute("""
                 SELECT token_number FROM tokens
-                WHERE counter_id = ? AND status = 'serving'
+                WHERE counter_id = ? AND organization_id = ? AND status = 'serving'
                 ORDER BY id DESC LIMIT 1
-            """, (active_token["counter_id"],))
+            """, (active_token["counter_id"], org_id))
             srv_row = c.fetchone()
             current_serving = srv_row["token_number"] if srv_row else None
 
@@ -1002,24 +1156,25 @@ def student_portal():
                 "qr_image": qr_base64
             }
 
-        # 3. Available Departments with active counters
+        # 3. Available Departments with active counters for this organization
         c.execute("""
             SELECT d.*,
-                   (SELECT COUNT(*) FROM counters c WHERE c.department_id = d.id AND c.is_active = 1) as open_counters,
-                   (SELECT COUNT(*) FROM tokens t WHERE t.department_id = d.id AND t.status = 'waiting') as total_waiting
+                   (SELECT COUNT(*) FROM counters c WHERE c.department_id = d.id AND c.is_active = 1 AND c.organization_id = ?) as open_counters,
+                   (SELECT COUNT(*) FROM tokens t WHERE t.department_id = d.id AND t.status = 'waiting' AND t.organization_id = ?) as total_waiting
             FROM departments d
+            WHERE d.organization_id = ?
             ORDER BY d.name
-        """)
+        """, (org_id, org_id, org_id))
         departments = c.fetchall()
 
-        # 4. Active Counters
+        # 4. Active Counters for this organization
         c.execute("""
             SELECT c.*, d.name as department_name
             FROM counters c
             JOIN departments d ON d.id = c.department_id
-            WHERE c.is_active = 1
+            WHERE c.is_active = 1 AND c.organization_id = ?
             ORDER BY d.name, c.name
-        """)
+        """, (org_id,))
         counters = c.fetchall()
 
         # 5. Token History for Student
@@ -1028,9 +1183,9 @@ def student_portal():
             FROM tokens t
             JOIN counters c ON c.id = t.counter_id
             JOIN departments d ON d.id = t.department_id
-            WHERE t.student_id = ?
+            WHERE t.student_id = ? AND t.organization_id = ?
             ORDER BY t.id DESC LIMIT 10
-        """, (student_id,))
+        """, (student_id, org_id))
         token_history = c.fetchall()
 
     return render_template(
@@ -1048,6 +1203,7 @@ def student_portal():
 @login_required(role="student")
 def student_generate_token():
     student_id = get_current_user_id("student")
+    org_id = get_current_org_id("student")
     counter_id = request.form.get("counter_id")
     service_reason = request.form.get("service_reason", "").strip()
 
@@ -1060,21 +1216,21 @@ def student_generate_token():
         with db.get_db() as conn:
             c = conn.cursor()
 
-            # 1. Prevent duplicate active tokens for this student across all counters
+            # 1. Prevent duplicate active tokens for this student across all counters within the organization
             c.execute("""
                 SELECT id, token_number, counter_id FROM tokens
-                WHERE student_id = ? AND status IN ('waiting', 'serving')
-            """, (student_id,))
+                WHERE student_id = ? AND organization_id = ? AND status IN ('waiting', 'serving')
+            """, (student_id, org_id))
             existing_active = c.fetchone()
             if existing_active:
                 flash("You already have an active queue token. Please wait or cancel it first.", "warning")
                 return redirect(url_for("student_portal"))
 
-            # 2. Check counter validity & open/paused state
-            c.execute("SELECT * FROM counters WHERE id = ?", (counter_id,))
+            # 2. Check counter validity & open/paused state AND organization ownership
+            c.execute("SELECT * FROM counters WHERE id = ? AND organization_id = ?", (counter_id, org_id))
             counter = c.fetchone()
             if not counter or not counter["is_active"]:
-                flash("Selected counter is currently closed. Please select an open counter.", "danger")
+                flash("Selected counter is currently closed or invalid.", "danger")
                 return redirect(url_for("student_portal"))
 
             if counter["is_paused"]:
@@ -1091,27 +1247,27 @@ def student_generate_token():
             c.execute(f"""
                 SELECT COALESCE(MAX(token_number), 0) + 1 as next_token
                 FROM tokens
-                WHERE counter_id = ? AND {date_cond}
-            """, (counter_id,))
+                WHERE counter_id = ? AND organization_id = ? AND {date_cond}
+            """, (counter_id, org_id))
             next_token_num = c.fetchone()["next_token"]
 
             # 4. Fetch student details
-            c.execute("SELECT full_name, identifier, phone FROM users WHERE id = ?", (student_id,))
+            c.execute("SELECT full_name, identifier, phone FROM users WHERE id = ? AND organization_id = ?", (student_id, org_id))
             st = c.fetchone()
 
             token_salt = secrets.token_hex(8)
 
             c.execute("""
-                INSERT INTO tokens (token_number, counter_id, department_id, student_id, student_name, student_roll, student_phone, service_reason, status, token_salt)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?)
-            """, (next_token_num, counter_id, counter["department_id"], student_id, st["full_name"], st["identifier"], st["phone"], service_reason, token_salt))
+                INSERT INTO tokens (organization_id, token_number, counter_id, department_id, student_id, student_name, student_roll, student_phone, service_reason, status, token_salt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?)
+            """, (org_id, next_token_num, counter_id, counter["department_id"], student_id, st["full_name"], st["identifier"], st["phone"], service_reason, token_salt))
             token_id = c.lastrowid
 
             # Insert notification
             c.execute("""
-                INSERT INTO notifications (user_id, title, message)
-                VALUES (?, ?, ?)
-            """, (student_id, "Token Generated", f"Token #{next_token_num} generated for {counter['name']}."))
+                INSERT INTO notifications (organization_id, user_id, title, message)
+                VALUES (?, ?, ?, ?)
+            """, (org_id, student_id, "Token Generated", f"Token #{next_token_num} generated for {counter['name']}."))
 
             conn.commit()
 
@@ -1126,6 +1282,7 @@ def student_generate_token():
 @login_required(role="student")
 def student_token_status(token_id):
     student_id = get_current_user_id("student")
+    org_id = get_current_org_id("student")
 
     with db.get_db() as conn:
         c = conn.cursor()
@@ -1135,8 +1292,8 @@ def student_token_status(token_id):
             FROM tokens t
             JOIN counters c ON c.id = t.counter_id
             JOIN departments d ON d.id = t.department_id
-            WHERE t.id = ? AND t.student_id = ?
-        """, (token_id, student_id))
+            WHERE t.id = ? AND t.student_id = ? AND t.organization_id = ?
+        """, (token_id, student_id, org_id))
         token = c.fetchone()
 
         if not token:
@@ -1146,16 +1303,16 @@ def student_token_status(token_id):
         # People ahead in waiting status
         c.execute("""
             SELECT COUNT(*) as count FROM tokens
-            WHERE counter_id = ? AND status = 'waiting' AND id < ?
-        """, (token["counter_id"], token["id"]))
+            WHERE counter_id = ? AND organization_id = ? AND status = 'waiting' AND id < ?
+        """, (token["counter_id"], org_id, token["id"]))
         people_ahead = c.fetchone()["count"]
 
         # Current serving token
         c.execute("""
             SELECT token_number FROM tokens
-            WHERE counter_id = ? AND status = 'serving'
+            WHERE counter_id = ? AND organization_id = ? AND status = 'serving'
             ORDER BY id DESC LIMIT 1
-        """, (token["counter_id"],))
+        """, (token["counter_id"], org_id))
         srv_row = c.fetchone()
         current_serving = srv_row["token_number"] if srv_row else None
 
@@ -1181,14 +1338,15 @@ def student_token_status(token_id):
 def api_student_token_status(token_id):
     """Real-time JSON endpoint for client-side live queue polling."""
     student_id = get_current_user_id("student")
+    org_id = get_current_org_id("student")
     with db.get_db() as conn:
         c = conn.cursor()
         c.execute("""
             SELECT t.status, t.token_number, t.counter_id, c.avg_service_time_mins
             FROM tokens t
             JOIN counters c ON c.id = t.counter_id
-            WHERE t.id = ? AND t.student_id = ?
-        """, (token_id, student_id))
+            WHERE t.id = ? AND t.student_id = ? AND t.organization_id = ?
+        """, (token_id, student_id, org_id))
         token = c.fetchone()
 
         if not token:
@@ -1196,15 +1354,15 @@ def api_student_token_status(token_id):
 
         c.execute("""
             SELECT COUNT(*) as count FROM tokens
-            WHERE counter_id = ? AND status = 'waiting' AND id < ?
-        """, (token["counter_id"], token_id))
+            WHERE counter_id = ? AND organization_id = ? AND status = 'waiting' AND id < ?
+        """, (token["counter_id"], org_id, token_id))
         people_ahead = c.fetchone()["count"]
 
         c.execute("""
             SELECT token_number FROM tokens
-            WHERE counter_id = ? AND status = 'serving'
+            WHERE counter_id = ? AND organization_id = ? AND status = 'serving'
             ORDER BY id DESC LIMIT 1
-        """, (token["counter_id"],))
+        """, (token["counter_id"], org_id))
         srv_row = c.fetchone()
         current_serving = srv_row["token_number"] if srv_row else None
 
@@ -1225,12 +1383,13 @@ def api_student_token_status(token_id):
 @login_required(role="student")
 def student_cancel_token(token_id):
     student_id = get_current_user_id("student")
+    org_id = get_current_org_id("student")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
             c = conn.cursor()
-            # Enforce IDOR protection: token must belong to authenticated student
-            c.execute("SELECT status, counter_id, token_number FROM tokens WHERE id = ? AND student_id = ?", (token_id, student_id))
+            # Enforce IDOR protection: token must belong to authenticated student and current organization
+            c.execute("SELECT status, counter_id, token_number FROM tokens WHERE id = ? AND student_id = ? AND organization_id = ?", (token_id, student_id, org_id))
             row = c.fetchone()
 
             if not row:
@@ -1241,11 +1400,11 @@ def student_cancel_token(token_id):
                 flash("Only waiting tokens can be cancelled.", "warning")
                 return redirect(url_for("student_portal"))
 
-            c.execute("UPDATE tokens SET status = 'cancelled' WHERE id = ? AND status = 'waiting'", (token_id,))
+            c.execute("UPDATE tokens SET status = 'cancelled' WHERE id = ? AND organization_id = ? AND status = 'waiting'", (token_id, org_id))
             c.execute("""
-                INSERT INTO audit_logs (action, user_id, user_role, details)
-                VALUES ('CANCEL_TOKEN', ?, 'student', ?)
-            """, (student_id, f"Cancelled Token #{row['token_number']} at Counter ID {row['counter_id']}"))
+                INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+                VALUES (?, 'CANCEL_TOKEN', ?, 'student', ?)
+            """, (org_id, student_id, f"Cancelled Token #{row['token_number']} at Counter ID {row['counter_id']}"))
             conn.commit()
 
         broadcast_queue_update(row["counter_id"], "token_cancelled", {"token_id": token_id, "token_number": row["token_number"]})
@@ -1361,15 +1520,24 @@ def clear_notifications():
 # PHASE 4: COMPLETE OPERATOR PORTAL
 # -------------------------------------------------------------
 
-def get_operator_counter(cursor, operator_id):
-    """Retrieve counter assigned to the authenticated operator."""
-    cursor.execute("""
-        SELECT c.*, d.name as department_name, d.building_block
-        FROM counters c
-        JOIN departments d ON d.id = c.department_id
-        WHERE c.assigned_operator_id = ?
-        LIMIT 1
-    """, (operator_id,))
+def get_operator_counter(cursor, operator_id, org_id=None):
+    """Retrieve counter assigned to the authenticated operator within their organization."""
+    if org_id:
+        cursor.execute("""
+            SELECT c.*, d.name as department_name, d.building_block
+            FROM counters c
+            JOIN departments d ON d.id = c.department_id
+            WHERE c.assigned_operator_id = ? AND c.organization_id = ?
+            LIMIT 1
+        """, (operator_id, org_id))
+    else:
+        cursor.execute("""
+            SELECT c.*, d.name as department_name, d.building_block
+            FROM counters c
+            JOIN departments d ON d.id = c.department_id
+            WHERE c.assigned_operator_id = ?
+            LIMIT 1
+        """, (operator_id,))
     return cursor.fetchone()
 
 
@@ -1378,15 +1546,16 @@ def get_operator_counter(cursor, operator_id):
 @login_required(role="operator")
 def operator_portal():
     operator_id = get_current_user_id("operator")
+    org_id = get_current_org_id("operator")
 
     with db.get_db() as conn:
         c = conn.cursor()
 
-        # 1. Fetch Operator and Assigned Counter
-        c.execute("SELECT * FROM users WHERE id = ?", (operator_id,))
+        # 1. Fetch Operator and Assigned Counter scoped to organization
+        c.execute("SELECT * FROM users WHERE id = ? AND organization_id = ?", (operator_id, org_id))
         operator = c.fetchone()
 
-        counter = get_operator_counter(c, operator_id)
+        counter = get_operator_counter(c, operator_id, org_id)
 
         if not counter:
             return render_template(
@@ -1401,36 +1570,41 @@ def operator_portal():
         # 2. Currently Serving Token
         c.execute("""
             SELECT * FROM tokens
-            WHERE counter_id = ? AND status = 'serving'
+            WHERE counter_id = ? AND organization_id = ? AND status = 'serving'
             ORDER BY called_at DESC LIMIT 1
-        """, (counter["id"],))
+        """, (counter["id"], org_id))
         currently_serving = c.fetchone()
 
         # 3. Waiting Queue for this counter
         c.execute("""
             SELECT * FROM tokens
-            WHERE counter_id = ? AND status = 'waiting'
+            WHERE counter_id = ? AND organization_id = ? AND status = 'waiting'
             ORDER BY id ASC
-        """, (counter["id"],))
+        """, (counter["id"], org_id))
         waiting_tokens = c.fetchall()
 
         # 4. Previously called / skipped token (for recall)
         c.execute("""
             SELECT * FROM tokens
-            WHERE counter_id = ? AND status = 'skipped'
+            WHERE counter_id = ? AND organization_id = ? AND status = 'skipped'
             ORDER BY id DESC LIMIT 1
-        """, (counter["id"],))
+        """, (counter["id"], org_id))
         last_skipped = c.fetchone()
 
         # 5. Daily Counter Statistics
-        c.execute("""
+        if db.is_postgres():
+            date_cond = "created_at::DATE = CURRENT_DATE"
+        else:
+            date_cond = "date(created_at) = date('now')"
+
+        c.execute(f"""
             SELECT
                 SUM(CASE WHEN status = 'waiting' THEN 1 ELSE 0 END) as waiting_count,
                 SUM(CASE WHEN status = 'served' THEN 1 ELSE 0 END) as completed_count,
                 SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped_count
             FROM tokens
-            WHERE counter_id = ? AND date(created_at) = date('now')
-        """, (counter["id"],))
+            WHERE counter_id = ? AND organization_id = ? AND {date_cond}
+        """, (counter["id"], org_id))
         stat_row = c.fetchone()
 
         stats = {
@@ -1455,13 +1629,14 @@ def operator_portal():
 @login_required(role="operator")
 def operator_call_next():
     operator_id = get_current_user_id("operator")
+    org_id = get_current_org_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
             c = conn.cursor()
-            counter = get_operator_counter(c, operator_id)
+            counter = get_operator_counter(c, operator_id, org_id)
             if not counter:
-                flash("No counter assigned to your account.", "danger")
+                flash("No counter assigned to your account in this organization.", "danger")
                 return redirect(url_for("operator_portal"))
 
             if not counter["is_active"]:
@@ -1473,7 +1648,7 @@ def operator_call_next():
                 return redirect(url_for("operator_portal"))
 
             # Check if already serving an active token
-            c.execute("SELECT id, token_number FROM tokens WHERE counter_id = ? AND status = 'serving'", (counter["id"],))
+            c.execute("SELECT id, token_number FROM tokens WHERE counter_id = ? AND organization_id = ? AND status = 'serving'", (counter["id"], org_id))
             active_serving = c.fetchone()
             if active_serving:
                 flash(f"Token #{active_serving['token_number']} is currently being served. Complete or skip it before calling next.", "warning")
@@ -1482,9 +1657,9 @@ def operator_call_next():
             # Get next waiting token in strict FIFO order
             c.execute("""
                 SELECT * FROM tokens
-                WHERE counter_id = ? AND status = 'waiting'
+                WHERE counter_id = ? AND organization_id = ? AND status = 'waiting'
                 ORDER BY id ASC LIMIT 1
-            """, (counter["id"],))
+            """, (counter["id"], org_id))
             next_token = c.fetchone()
 
             if not next_token:
@@ -1495,14 +1670,15 @@ def operator_call_next():
             c.execute("""
                 UPDATE tokens
                 SET status = 'serving', called_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status = 'waiting'
-            """, (next_token["id"],))
+                WHERE id = ? AND organization_id = ? AND status = 'waiting'
+            """, (next_token["id"], org_id))
 
             # Notify student
             c.execute("""
-                INSERT INTO notifications (user_id, title, message)
-                VALUES (?, ?, ?)
+                INSERT INTO notifications (organization_id, user_id, title, message)
+                VALUES (?, ?, ?, ?)
             """, (
+                org_id,
                 next_token["student_id"],
                 "It's Your Turn!",
                 f"Token #{next_token['token_number']} called at {counter['name']} ({counter['code']}). Please proceed to desk."
@@ -1510,9 +1686,9 @@ def operator_call_next():
 
             # Audit log
             c.execute("""
-                INSERT INTO audit_logs (action, user_id, user_role, details)
-                VALUES (?, ?, 'operator', ?)
-            """, ("CALL_NEXT", operator_id, f"Called Token #{next_token['token_number']} for Counter {counter['code']}"))
+                INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+                VALUES (?, 'CALL_NEXT', ?, 'operator', ?)
+            """, (org_id, operator_id, f"Called Token #{next_token['token_number']} for Counter {counter['code']}"))
 
             conn.commit()
 
@@ -1533,17 +1709,18 @@ def operator_call_next():
 @login_required(role="operator")
 def operator_complete_token(token_id):
     operator_id = get_current_user_id("operator")
+    org_id = get_current_org_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
             c = conn.cursor()
-            counter = get_operator_counter(c, operator_id)
+            counter = get_operator_counter(c, operator_id, org_id)
             if not counter:
                 flash("Unauthorized counter access.", "danger")
                 return redirect(url_for("operator_portal"))
 
             # Verify token belongs to operator counter and is 'serving'
-            c.execute("SELECT * FROM tokens WHERE id = ? AND counter_id = ?", (token_id, counter["id"]))
+            c.execute("SELECT * FROM tokens WHERE id = ? AND counter_id = ? AND organization_id = ?", (token_id, counter["id"], org_id))
             token = c.fetchone()
 
             if not token:
@@ -1557,20 +1734,20 @@ def operator_complete_token(token_id):
             c.execute("""
                 UPDATE tokens
                 SET status = 'served', completed_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status = 'serving'
-            """, (token_id,))
+                WHERE id = ? AND organization_id = ? AND status = 'serving'
+            """, (token_id, org_id))
 
             # Notification for student
             c.execute("""
-                INSERT INTO notifications (user_id, title, message)
-                VALUES (?, ?, ?)
-            """, (token["student_id"], "Service Completed", f"Service for Token #{token['token_number']} completed at {counter['name']}."))
+                INSERT INTO notifications (organization_id, user_id, title, message)
+                VALUES (?, ?, ?, ?)
+            """, (org_id, token["student_id"], "Service Completed", f"Service for Token #{token['token_number']} completed at {counter['name']}."))
 
             # Audit log
             c.execute("""
-                INSERT INTO audit_logs (action, user_id, user_role, details)
-                VALUES (?, ?, 'operator', ?)
-            """, ("COMPLETE_TOKEN", operator_id, f"Completed Token #{token['token_number']}"))
+                INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+                VALUES (?, 'COMPLETE_TOKEN', ?, 'operator', ?)
+            """, (org_id, operator_id, f"Completed Token #{token['token_number']}"))
 
             conn.commit()
 
@@ -1587,35 +1764,36 @@ def operator_complete_token(token_id):
 @login_required(role="operator")
 def operator_skip_token(token_id):
     operator_id = get_current_user_id("operator")
+    org_id = get_current_org_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
             c = conn.cursor()
-            counter = get_operator_counter(c, operator_id)
+            counter = get_operator_counter(c, operator_id, org_id)
             if not counter:
                 flash("Unauthorized counter access.", "danger")
                 return redirect(url_for("operator_portal"))
 
-            c.execute("SELECT * FROM tokens WHERE id = ? AND counter_id = ?", (token_id, counter["id"]))
+            c.execute("SELECT * FROM tokens WHERE id = ? AND counter_id = ? AND organization_id = ?", (token_id, counter["id"], org_id))
             token = c.fetchone()
 
             if not token or token["status"] != "serving":
                 flash("Only currently serving tokens can be skipped.", "warning")
                 return redirect(url_for("operator_portal"))
 
-            c.execute("UPDATE tokens SET status = 'skipped' WHERE id = ? AND status = 'serving'", (token_id,))
+            c.execute("UPDATE tokens SET status = 'skipped' WHERE id = ? AND organization_id = ? AND status = 'serving'", (token_id, org_id))
 
             # Notification for student
             c.execute("""
-                INSERT INTO notifications (user_id, title, message)
-                VALUES (?, ?, ?)
-            """, (token["student_id"], "Token Skipped", f"Token #{token['token_number']} was marked skipped due to no-show at {counter['name']}."))
+                INSERT INTO notifications (organization_id, user_id, title, message)
+                VALUES (?, ?, ?, ?)
+            """, (org_id, token["student_id"], "Token Skipped", f"Token #{token['token_number']} was marked skipped due to no-show at {counter['name']}."))
 
             # Audit log
             c.execute("""
-                INSERT INTO audit_logs (action, user_id, user_role, details)
-                VALUES (?, ?, 'operator', ?)
-            """, ("SKIP_TOKEN", operator_id, f"Skipped Token #{token['token_number']}"))
+                INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+                VALUES (?, 'SKIP_TOKEN', ?, 'operator', ?)
+            """, (org_id, operator_id, f"Skipped Token #{token['token_number']}"))
 
             conn.commit()
 
@@ -1632,22 +1810,23 @@ def operator_skip_token(token_id):
 @login_required(role="operator")
 def operator_recall_token(token_id):
     operator_id = get_current_user_id("operator")
+    org_id = get_current_org_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
             c = conn.cursor()
-            counter = get_operator_counter(c, operator_id)
+            counter = get_operator_counter(c, operator_id, org_id)
             if not counter:
                 flash("Unauthorized counter access.", "danger")
                 return redirect(url_for("operator_portal"))
 
             # Check if already serving another token
-            c.execute("SELECT id, token_number FROM tokens WHERE counter_id = ? AND status = 'serving'", (counter["id"],))
+            c.execute("SELECT id, token_number FROM tokens WHERE counter_id = ? AND organization_id = ? AND status = 'serving'", (counter["id"], org_id))
             if c.fetchone():
                 flash("Please complete or skip the current active token before recalling.", "warning")
                 return redirect(url_for("operator_portal"))
 
-            c.execute("SELECT * FROM tokens WHERE id = ? AND counter_id = ?", (token_id, counter["id"]))
+            c.execute("SELECT * FROM tokens WHERE id = ? AND counter_id = ? AND organization_id = ?", (token_id, counter["id"], org_id))
             token = c.fetchone()
 
             if not token or token["status"] != "skipped":
@@ -1657,20 +1836,20 @@ def operator_recall_token(token_id):
             c.execute("""
                 UPDATE tokens
                 SET status = 'serving', called_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status = 'skipped'
-            """, (token_id,))
+                WHERE id = ? AND organization_id = ? AND status = 'skipped'
+            """, (token_id, org_id))
 
             # Notification for student
             c.execute("""
-                INSERT INTO notifications (user_id, title, message)
-                VALUES (?, ?, ?)
-            """, (token["student_id"], "Token Recalled!", f"Token #{token['token_number']} was recalled at {counter['name']}."))
+                INSERT INTO notifications (organization_id, user_id, title, message)
+                VALUES (?, ?, ?, ?)
+            """, (org_id, token["student_id"], "Token Recalled!", f"Token #{token['token_number']} was recalled at {counter['name']}."))
 
             # Audit log
             c.execute("""
-                INSERT INTO audit_logs (action, user_id, user_role, details)
-                VALUES (?, ?, 'operator', ?)
-            """, ("RECALL_TOKEN", operator_id, f"Recalled Token #{token['token_number']}"))
+                INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+                VALUES (?, 'RECALL_TOKEN', ?, 'operator', ?)
+            """, (org_id, operator_id, f"Recalled Token #{token['token_number']}"))
 
             conn.commit()
 
@@ -1687,20 +1866,21 @@ def operator_recall_token(token_id):
 @login_required(role="operator")
 def operator_pause_queue():
     operator_id = get_current_user_id("operator")
+    org_id = get_current_org_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
             c = conn.cursor()
-            counter = get_operator_counter(c, operator_id)
+            counter = get_operator_counter(c, operator_id, org_id)
             if not counter:
                 flash("Unauthorized counter access.", "danger")
                 return redirect(url_for("operator_portal"))
 
-            c.execute("UPDATE counters SET is_paused = 1 WHERE id = ?", (counter["id"],))
+            c.execute("UPDATE counters SET is_paused = 1 WHERE id = ? AND organization_id = ?", (counter["id"], org_id))
             c.execute("""
-                INSERT INTO audit_logs (action, user_id, user_role, details)
-                VALUES ('PAUSE_QUEUE', ?, 'operator', ?)
-            """, (operator_id, f"Paused queue at Counter {counter['code']}"))
+                INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+                VALUES (?, 'PAUSE_QUEUE', ?, 'operator', ?)
+            """, (org_id, operator_id, f"Paused queue at Counter {counter['code']}"))
             conn.commit()
 
         broadcast_queue_update(counter["id"], "counter_status_changed", {"is_paused": 1, "is_active": counter["is_active"]})
@@ -1713,20 +1893,21 @@ def operator_pause_queue():
 @login_required(role="operator")
 def operator_resume_queue():
     operator_id = get_current_user_id("operator")
+    org_id = get_current_org_id("operator")
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
             c = conn.cursor()
-            counter = get_operator_counter(c, operator_id)
+            counter = get_operator_counter(c, operator_id, org_id)
             if not counter:
                 flash("Unauthorized counter access.", "danger")
                 return redirect(url_for("operator_portal"))
 
-            c.execute("UPDATE counters SET is_paused = 0 WHERE id = ?", (counter["id"],))
+            c.execute("UPDATE counters SET is_paused = 0 WHERE id = ? AND organization_id = ?", (counter["id"], org_id))
             c.execute("""
-                INSERT INTO audit_logs (action, user_id, user_role, details)
-                VALUES ('RESUME_QUEUE', ?, 'operator', ?)
-            """, (operator_id, f"Resumed queue at Counter {counter['code']}"))
+                INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+                VALUES (?, 'RESUME_QUEUE', ?, 'operator', ?)
+            """, (org_id, operator_id, f"Resumed queue at Counter {counter['code']}"))
             conn.commit()
 
         broadcast_queue_update(counter["id"], "counter_status_changed", {"is_paused": 0, "is_active": counter["is_active"]})
@@ -1739,22 +1920,23 @@ def operator_resume_queue():
 @login_required(role="operator")
 def operator_toggle_counter():
     operator_id = get_current_user_id("operator")
+    org_id = get_current_org_id("operator")
     action = request.form.get("action")  # 'open' or 'close'
 
     with QUEUE_LOCK:
         with db.get_db() as conn:
             c = conn.cursor()
-            counter = get_operator_counter(c, operator_id)
+            counter = get_operator_counter(c, operator_id, org_id)
             if not counter:
                 flash("Unauthorized counter access.", "danger")
                 return redirect(url_for("operator_portal"))
 
             new_status = 1 if action == "open" else 0
-            c.execute("UPDATE counters SET is_active = ? WHERE id = ?", (new_status, counter["id"]))
+            c.execute("UPDATE counters SET is_active = ? WHERE id = ? AND organization_id = ?", (new_status, counter["id"], org_id))
             c.execute("""
-                INSERT INTO audit_logs (action, user_id, user_role, details)
-                VALUES (?, ?, 'operator', ?)
-            """, (f"COUNTER_{action.upper()}", operator_id, f"Set Counter {counter['code']} status to {action}"))
+                INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+                VALUES (?, ?, ?, 'operator', ?)
+            """, (org_id, f"COUNTER_{action.upper()}", operator_id, f"Set Counter {counter['code']} status to {action}"))
             conn.commit()
 
         broadcast_queue_update(counter["id"], "counter_status_changed", {"is_paused": counter["is_paused"], "is_active": new_status})
@@ -1852,21 +2034,28 @@ def operator_settings():
 @app.route("/admin/dashboard")
 @login_required(role="admin")
 def admin_portal():
+    org_id = get_current_org_id("admin")
+
     with db.get_db() as conn:
         c = conn.cursor()
 
-        # 1. User & Student Counts
-        c.execute("SELECT COUNT(*) as count FROM users WHERE role = 'student'")
+        # 1. User & Student Counts scoped to organization
+        c.execute("SELECT COUNT(*) as count FROM users WHERE role = 'student' AND organization_id = ?", (org_id,))
         total_students = c.fetchone()["count"]
 
-        c.execute("SELECT COUNT(*) as count FROM users")
+        c.execute("SELECT COUNT(*) as count FROM users WHERE organization_id = ?", (org_id,))
         total_users = c.fetchone()["count"]
 
-        c.execute("SELECT COUNT(*) as count FROM users WHERE role = 'operator'")
+        c.execute("SELECT COUNT(*) as count FROM users WHERE role = 'operator' AND organization_id = ?", (org_id,))
         total_operators = c.fetchone()["count"]
 
-        # 2. Token Stats Today
-        c.execute("""
+        # 2. Token Stats Today scoped to organization
+        if db.is_postgres():
+            date_cond = "created_at::DATE = CURRENT_DATE"
+        else:
+            date_cond = "date(created_at) = date('now')"
+
+        c.execute(f"""
             SELECT
                 COUNT(*) as total_today,
                 SUM(CASE WHEN status = 'waiting' THEN 1 ELSE 0 END) as waiting_count,
@@ -1875,11 +2064,11 @@ def admin_portal():
                 SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped_count,
                 SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_count
             FROM tokens
-            WHERE date(created_at) = date('now')
-        """)
+            WHERE organization_id = ? AND {date_cond}
+        """, (org_id,))
         token_stats = c.fetchone()
 
-        # 3. Counter Statuses
+        # 3. Counter Statuses scoped to organization
         c.execute("""
             SELECT
                 COUNT(*) as total_counters,
@@ -1887,25 +2076,26 @@ def admin_portal():
                 SUM(CASE WHEN is_active = 1 AND is_paused = 1 THEN 1 ELSE 0 END) as paused_counters,
                 SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END) as closed_counters
             FROM counters
-        """)
+            WHERE organization_id = ?
+        """, (org_id,))
         counter_stats = c.fetchone()
 
-        # 4. Department-wise queue stats
-        c.execute("""
+        # 4. Department-wise queue stats scoped to organization
+        c.execute(f"""
             SELECT d.id, d.code, d.name, d.building_block, d.is_active,
                    COUNT(DISTINCT c.id) as counter_count,
                    SUM(CASE WHEN t.status = 'waiting' THEN 1 ELSE 0 END) as waiting_tokens,
-                   SUM(CASE WHEN t.status = 'served' AND date(t.created_at) = date('now') THEN 1 ELSE 0 END) as served_today
+                   SUM(CASE WHEN t.status = 'served' AND {date_cond.replace('created_at', 't.created_at')} THEN 1 ELSE 0 END) as served_today
             FROM departments d
-            LEFT JOIN counters c ON c.department_id = d.id
-            LEFT JOIN tokens t ON t.department_id = d.id
+            LEFT JOIN counters c ON c.department_id = d.id AND c.organization_id = ?
+            LEFT JOIN tokens t ON t.department_id = d.id AND t.organization_id = ?
+            WHERE d.organization_id = ?
             GROUP BY d.id, d.code, d.name, d.building_block, d.is_active
             ORDER BY d.name
-        """)
+        """, (org_id, org_id, org_id))
         dept_stats = c.fetchall()
 
-        # 5. Daily Activity for Chart.js (Last 7 Days)
-        # Compatible across SQLite and PostgreSQL
+        # 5. Daily Activity for Chart.js (Last 7 Days) scoped to organization
         if db.is_postgres():
             date_sql = "TO_CHAR(created_at, 'YYYY-MM-DD')"
         else:
@@ -1916,18 +2106,19 @@ def admin_portal():
                    COUNT(*) as generated_count,
                    SUM(CASE WHEN status = 'served' THEN 1 ELSE 0 END) as completed_count
             FROM tokens
+            WHERE organization_id = ?
             GROUP BY {date_sql}
             ORDER BY day_date DESC
             LIMIT 7
-        """)
+        """, (org_id,))
         chart_rows = list(reversed(c.fetchall()))
 
         chart_labels = [r["day_date"] for r in chart_rows] if chart_rows else [datetime.date.today().isoformat()]
         chart_generated = [r["generated_count"] for r in chart_rows] if chart_rows else [token_stats["total_today"] or 0]
         chart_completed = [r["completed_count"] for r in chart_rows] if chart_rows else [token_stats["served_count"] or 0]
 
-        # 6. Recent Audit Logs
-        c.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 8")
+        # 6. Recent Audit Logs scoped to organization
+        c.execute("SELECT * FROM audit_logs WHERE organization_id = ? ORDER BY id DESC LIMIT 8", (org_id,))
         recent_audits = c.fetchall()
 
     metrics = {
@@ -1964,17 +2155,19 @@ def admin_portal():
 @app.route("/admin/departments")
 @login_required(role="admin")
 def admin_departments():
+    org_id = get_current_org_id("admin")
     with db.get_db() as conn:
         c = conn.cursor()
         c.execute("""
             SELECT d.*,
                    COUNT(DISTINCT c.id) as counter_count,
-                   (SELECT COUNT(*) FROM tokens t WHERE t.department_id = d.id) as total_tokens
+                   (SELECT COUNT(*) FROM tokens t WHERE t.department_id = d.id AND t.organization_id = ?) as total_tokens
             FROM departments d
-            LEFT JOIN counters c ON c.department_id = d.id
+            LEFT JOIN counters c ON c.department_id = d.id AND c.organization_id = ?
+            WHERE d.organization_id = ?
             GROUP BY d.id
             ORDER BY d.name
-        """)
+        """, (org_id, org_id, org_id))
         departments = c.fetchall()
     return render_template("admin_departments.html", departments=departments)
 
@@ -1982,6 +2175,7 @@ def admin_departments():
 @app.route("/admin/departments/create", methods=["POST"])
 @login_required(role="admin")
 def admin_department_create():
+    org_id = get_current_org_id("admin")
     code = request.form.get("code", "").strip().upper()
     name = request.form.get("name", "").strip()
     description = request.form.get("description", "").strip()
@@ -1993,20 +2187,20 @@ def admin_department_create():
 
     with db.get_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT id FROM departments WHERE code = ?", (code,))
+        c.execute("SELECT id FROM departments WHERE code = ? AND organization_id = ?", (code, org_id))
         if c.fetchone():
-            flash("Department with this code already exists.", "danger")
+            flash("Department with this code already exists in your organization.", "danger")
             return redirect(url_for("admin_departments"))
 
         c.execute("""
-            INSERT INTO departments (code, name, description, building_block, is_active)
-            VALUES (?, ?, ?, ?, 1)
-        """, (code, name, description, building_block))
+            INSERT INTO departments (organization_id, code, name, description, building_block, is_active)
+            VALUES (?, ?, ?, ?, ?, 1)
+        """, (org_id, code, name, description, building_block))
         
         c.execute("""
-            INSERT INTO audit_logs (action, user_id, user_role, details)
-            VALUES ('CREATE_DEPARTMENT', ?, 'admin', ?)
-        """, (get_current_user_id("admin"), f"Created department {name} ({code})"))
+            INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+            VALUES (?, 'CREATE_DEPARTMENT', ?, 'admin', ?)
+        """, (org_id, get_current_user_id("admin"), f"Created department {name} ({code})"))
         conn.commit()
 
     flash(f"Department '{name}' created successfully.", "success")
@@ -2016,6 +2210,7 @@ def admin_department_create():
 @app.route("/admin/departments/edit/<int:dept_id>", methods=["POST"])
 @login_required(role="admin")
 def admin_department_edit(dept_id):
+    org_id = get_current_org_id("admin")
     name = request.form.get("name", "").strip()
     description = request.form.get("description", "").strip()
     building_block = request.form.get("building_block", "Block 1").strip()
@@ -2030,13 +2225,13 @@ def admin_department_edit(dept_id):
         c.execute("""
             UPDATE departments
             SET name = ?, description = ?, building_block = ?, is_active = ?
-            WHERE id = ?
-        """, (name, description, building_block, is_active, dept_id))
+            WHERE id = ? AND organization_id = ?
+        """, (name, description, building_block, is_active, dept_id, org_id))
 
         c.execute("""
-            INSERT INTO audit_logs (action, user_id, user_role, details)
-            VALUES ('EDIT_DEPARTMENT', ?, 'admin', ?)
-        """, (get_current_user_id("admin"), f"Updated department ID {dept_id} ({name})"))
+            INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+            VALUES (?, 'EDIT_DEPARTMENT', ?, 'admin', ?)
+        """, (org_id, get_current_user_id("admin"), f"Updated department ID {dept_id} ({name})"))
         conn.commit()
 
     flash("Department updated successfully.", "success")
@@ -2046,20 +2241,21 @@ def admin_department_edit(dept_id):
 @app.route("/admin/departments/toggle/<int:dept_id>", methods=["POST"])
 @login_required(role="admin")
 def admin_department_toggle(dept_id):
+    org_id = get_current_org_id("admin")
     with db.get_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT name, is_active FROM departments WHERE id = ?", (dept_id,))
+        c.execute("SELECT name, is_active FROM departments WHERE id = ? AND organization_id = ?", (dept_id, org_id))
         dept = c.fetchone()
         if not dept:
             flash("Department not found.", "danger")
             return redirect(url_for("admin_departments"))
 
         new_status = 0 if (dept["is_active"] if "is_active" in dept else 1) else 1
-        c.execute("UPDATE departments SET is_active = ? WHERE id = ?", (new_status, dept_id))
+        c.execute("UPDATE departments SET is_active = ? WHERE id = ? AND organization_id = ?", (new_status, dept_id, org_id))
         c.execute("""
-            INSERT INTO audit_logs (action, user_id, user_role, details)
-            VALUES ('TOGGLE_DEPARTMENT', ?, 'admin', ?)
-        """, (get_current_user_id("admin"), f"Toggled department {dept['name']} active state to {new_status}"))
+            INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+            VALUES (?, 'TOGGLE_DEPARTMENT', ?, 'admin', ?)
+        """, (org_id, get_current_user_id("admin"), f"Toggled department {dept['name']} active state to {new_status}"))
         conn.commit()
 
     flash(f"Department '{dept['name']}' status changed.", "info")
@@ -2073,24 +2269,26 @@ def admin_department_toggle(dept_id):
 @app.route("/admin/counters")
 @login_required(role="admin")
 def admin_counters():
+    org_id = get_current_org_id("admin")
     with db.get_db() as conn:
         c = conn.cursor()
         c.execute("""
             SELECT c.*, d.name as department_name, d.code as department_code,
                    u.full_name as operator_name, u.identifier as operator_identifier,
-                   (SELECT COUNT(*) FROM tokens t WHERE t.counter_id = c.id AND t.status = 'waiting') as waiting_count,
-                   (SELECT token_number FROM tokens t WHERE t.counter_id = c.id AND t.status = 'serving' LIMIT 1) as now_serving
+                   (SELECT COUNT(*) FROM tokens t WHERE t.counter_id = c.id AND t.organization_id = ? AND t.status = 'waiting') as waiting_count,
+                   (SELECT token_number FROM tokens t WHERE t.counter_id = c.id AND t.organization_id = ? AND t.status = 'serving' LIMIT 1) as now_serving
             FROM counters c
             JOIN departments d ON d.id = c.department_id
             LEFT JOIN users u ON u.id = c.assigned_operator_id
+            WHERE c.organization_id = ?
             ORDER BY d.name, c.name
-        """)
+        """, (org_id, org_id, org_id))
         counters = c.fetchall()
 
-        c.execute("SELECT id, code, name FROM departments WHERE is_active = 1 ORDER BY name")
+        c.execute("SELECT id, code, name FROM departments WHERE is_active = 1 AND organization_id = ? ORDER BY name", (org_id,))
         departments = c.fetchall()
 
-        c.execute("SELECT id, full_name, identifier FROM users WHERE role = 'operator' ORDER BY full_name")
+        c.execute("SELECT id, full_name, identifier FROM users WHERE role = 'operator' AND organization_id = ? ORDER BY full_name", (org_id,))
         operators = c.fetchall()
 
     return render_template(
@@ -2104,6 +2302,7 @@ def admin_counters():
 @app.route("/admin/counters/create", methods=["POST"])
 @login_required(role="admin")
 def admin_counter_create():
+    org_id = get_current_org_id("admin")
     name = request.form.get("name", "").strip()
     code = request.form.get("code", "").strip().upper()
     department_id = request.form.get("department_id")
@@ -2116,24 +2315,24 @@ def admin_counter_create():
 
     with db.get_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT id FROM counters WHERE code = ?", (code,))
+        c.execute("SELECT id FROM counters WHERE code = ? AND organization_id = ?", (code, org_id))
         if c.fetchone():
-            flash("Counter with this code already exists.", "danger")
+            flash("Counter with this code already exists in your organization.", "danger")
             return redirect(url_for("admin_counters"))
 
         # If operator selected, clear previous assignment for that operator
         if operator_id:
-            c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ?", (operator_id,))
+            c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ? AND organization_id = ?", (operator_id, org_id))
 
         c.execute("""
-            INSERT INTO counters (department_id, name, code, is_active, is_paused, assigned_operator_id, avg_service_time_mins)
-            VALUES (?, ?, ?, 1, 0, ?, ?)
-        """, (department_id, name, code, operator_id, avg_service_time))
+            INSERT INTO counters (organization_id, department_id, name, code, is_active, is_paused, assigned_operator_id, avg_service_time_mins)
+            VALUES (?, ?, ?, ?, 1, 0, ?, ?)
+        """, (org_id, department_id, name, code, operator_id, avg_service_time))
 
         c.execute("""
-            INSERT INTO audit_logs (action, user_id, user_role, details)
-            VALUES ('CREATE_COUNTER', ?, 'admin', ?)
-        """, (get_current_user_id("admin"), f"Created counter {name} ({code})"))
+            INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+            VALUES (?, 'CREATE_COUNTER', ?, 'admin', ?)
+        """, (org_id, get_current_user_id("admin"), f"Created counter {name} ({code})"))
         conn.commit()
 
     flash(f"Counter '{name}' added successfully.", "success")
@@ -2143,6 +2342,7 @@ def admin_counter_create():
 @app.route("/admin/counters/edit/<int:counter_id>", methods=["POST"])
 @login_required(role="admin")
 def admin_counter_edit(counter_id):
+    org_id = get_current_org_id("admin")
     name = request.form.get("name", "").strip()
     avg_service_time = int(request.form.get("avg_service_time_mins", 8))
     department_id = request.form.get("department_id")
@@ -2156,19 +2356,19 @@ def admin_counter_edit(counter_id):
         c = conn.cursor()
 
         if operator_id:
-            # Reassign: unassign from previous counter if any
-            c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ? AND id != ?", (operator_id, counter_id))
+            # Reassign: unassign from previous counter if any in this organization
+            c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ? AND id != ? AND organization_id = ?", (operator_id, counter_id, org_id))
 
         c.execute("""
             UPDATE counters
             SET name = ?, avg_service_time_mins = ?, department_id = ?, assigned_operator_id = ?
-            WHERE id = ?
-        """, (name, avg_service_time, department_id, operator_id, counter_id))
+            WHERE id = ? AND organization_id = ?
+        """, (name, avg_service_time, department_id, operator_id, counter_id, org_id))
 
         c.execute("""
-            INSERT INTO audit_logs (action, user_id, user_role, details)
-            VALUES ('EDIT_COUNTER', ?, 'admin', ?)
-        """, (get_current_user_id("admin"), f"Updated counter ID {counter_id} ({name})"))
+            INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+            VALUES (?, 'EDIT_COUNTER', ?, 'admin', ?)
+        """, (org_id, get_current_user_id("admin"), f"Updated counter ID {counter_id} ({name})"))
         conn.commit()
 
     flash("Counter updated successfully.", "success")
@@ -2178,29 +2378,30 @@ def admin_counter_edit(counter_id):
 @app.route("/admin/counters/action/<int:counter_id>", methods=["POST"])
 @login_required(role="admin")
 def admin_counter_action(counter_id):
+    org_id = get_current_org_id("admin")
     action = request.form.get("action")  # 'open', 'close', 'pause', 'resume'
 
     with db.get_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT name, code FROM counters WHERE id = ?", (counter_id,))
+        c.execute("SELECT name, code FROM counters WHERE id = ? AND organization_id = ?", (counter_id, org_id))
         counter = c.fetchone()
         if not counter:
             flash("Counter not found.", "danger")
             return redirect(url_for("admin_counters"))
 
         if action == "open":
-            c.execute("UPDATE counters SET is_active = 1 WHERE id = ?", (counter_id,))
+            c.execute("UPDATE counters SET is_active = 1 WHERE id = ? AND organization_id = ?", (counter_id, org_id))
         elif action == "close":
-            c.execute("UPDATE counters SET is_active = 0 WHERE id = ?", (counter_id,))
+            c.execute("UPDATE counters SET is_active = 0 WHERE id = ? AND organization_id = ?", (counter_id, org_id))
         elif action == "pause":
-            c.execute("UPDATE counters SET is_paused = 1 WHERE id = ?", (counter_id,))
+            c.execute("UPDATE counters SET is_paused = 1 WHERE id = ? AND organization_id = ?", (counter_id, org_id))
         elif action == "resume":
-            c.execute("UPDATE counters SET is_paused = 0 WHERE id = ?", (counter_id,))
+            c.execute("UPDATE counters SET is_paused = 0 WHERE id = ? AND organization_id = ?", (counter_id, org_id))
 
         c.execute("""
-            INSERT INTO audit_logs (action, user_id, user_role, details)
-            VALUES (?, ?, 'admin', ?)
-        """, (f"ADMIN_COUNTER_{action.upper()}", get_current_user_id("admin"), f"Admin set Counter {counter['code']} to {action}"))
+            INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+            VALUES (?, ?, ?, 'admin', ?)
+        """, (org_id, f"ADMIN_COUNTER_{action.upper()}", get_current_user_id("admin"), f"Admin set Counter {counter['code']} to {action}"))
         conn.commit()
 
     flash(f"Counter {counter['name']} is now updated ({action}).", "info")
@@ -2214,25 +2415,27 @@ def admin_counter_action(counter_id):
 @app.route("/admin/operators")
 @login_required(role="admin")
 def admin_operators():
+    org_id = get_current_org_id("admin")
     with db.get_db() as conn:
         c = conn.cursor()
         c.execute("""
             SELECT u.*, c.name as assigned_counter_name, c.code as assigned_counter_code, c.id as assigned_counter_id,
                    d.name as department_name
             FROM users u
-            LEFT JOIN counters c ON c.assigned_operator_id = u.id
-            LEFT JOIN departments d ON d.id = c.department_id
-            WHERE u.role = 'operator'
+            LEFT JOIN counters c ON c.assigned_operator_id = u.id AND c.organization_id = ?
+            LEFT JOIN departments d ON d.id = c.department_id AND d.organization_id = ?
+            WHERE u.role = 'operator' AND u.organization_id = ?
             ORDER BY u.full_name
-        """)
+        """, (org_id, org_id, org_id))
         operators = c.fetchall()
 
         c.execute("""
             SELECT c.id, c.name, c.code, d.name as dept_name
             FROM counters c
             JOIN departments d ON d.id = c.department_id
+            WHERE c.organization_id = ? AND d.organization_id = ?
             ORDER BY d.name, c.name
-        """)
+        """, (org_id, org_id))
         counters = c.fetchall()
 
     return render_template("admin_operators.html", operators=operators, counters=counters)
@@ -2241,6 +2444,7 @@ def admin_operators():
 @app.route("/admin/operators/create", methods=["POST"])
 @login_required(role="admin")
 def admin_operator_create():
+    org_id = get_current_org_id("admin")
     full_name = request.form.get("full_name", "").strip()
     identifier = request.form.get("identifier", "").strip().upper()
     email = request.form.get("email", "").strip().lower()
@@ -2258,25 +2462,25 @@ def admin_operator_create():
 
     with db.get_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT id FROM users WHERE email = ? OR identifier = ?", (email, identifier))
+        c.execute("SELECT id FROM users WHERE (email = ? OR identifier = ?) AND organization_id = ?", (email, identifier, org_id))
         if c.fetchone():
-            flash("User with this email or employee ID already exists.", "danger")
+            flash("User with this email or employee ID already exists in your organization.", "danger")
             return redirect(url_for("admin_operators"))
 
         pw_hash = generate_password_hash(password)
         c.execute("""
-            INSERT INTO users (email, password_hash, full_name, role, identifier, phone, is_active)
-            VALUES (?, ?, ?, 'operator', ?, ?, 1)
-        """, (email, pw_hash, full_name, identifier, phone))
+            INSERT INTO users (organization_id, email, password_hash, full_name, role, identifier, phone, is_active)
+            VALUES (?, ?, ?, ?, 'operator', ?, ?, 1)
+        """, (org_id, email, pw_hash, full_name, identifier, phone))
         op_id = c.lastrowid
 
         if counter_id:
-            c.execute("UPDATE counters SET assigned_operator_id = ? WHERE id = ?", (op_id, counter_id))
+            c.execute("UPDATE counters SET assigned_operator_id = ? WHERE id = ? AND organization_id = ?", (op_id, counter_id, org_id))
 
         c.execute("""
-            INSERT INTO audit_logs (action, user_id, user_role, details)
-            VALUES ('CREATE_OPERATOR', ?, 'admin', ?)
-        """, (get_current_user_id("admin"), f"Created operator {full_name} ({identifier})"))
+            INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+            VALUES (?, 'CREATE_OPERATOR', ?, 'admin', ?)
+        """, (org_id, get_current_user_id("admin"), f"Created operator {full_name} ({identifier})"))
         conn.commit()
 
     flash(f"Operator account created for {full_name}.", "success")
@@ -2286,22 +2490,23 @@ def admin_operator_create():
 @app.route("/admin/operators/assign/<int:operator_id>", methods=["POST"])
 @login_required(role="admin")
 def admin_operator_assign(operator_id):
+    org_id = get_current_org_id("admin")
     raw_counter_id = request.form.get("counter_id", "").strip()
     counter_id = int(raw_counter_id) if raw_counter_id and raw_counter_id.isdigit() else None
 
     with db.get_db() as conn:
         c = conn.cursor()
 
-        # Unassign operator from any existing desk
-        c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ?", (operator_id,))
+        # Unassign operator from any existing desk within this organization
+        c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ? AND organization_id = ?", (operator_id, org_id))
 
         if counter_id:
-            c.execute("UPDATE counters SET assigned_operator_id = ? WHERE id = ?", (operator_id, counter_id))
+            c.execute("UPDATE counters SET assigned_operator_id = ? WHERE id = ? AND organization_id = ?", (operator_id, counter_id, org_id))
 
         c.execute("""
-            INSERT INTO audit_logs (action, user_id, user_role, details)
-            VALUES ('REASSIGN_OPERATOR', ?, 'admin', ?)
-        """, (get_current_user_id("admin"), f"Reassigned operator ID {operator_id} to counter ID {counter_id}"))
+            INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+            VALUES (?, 'REASSIGN_OPERATOR', ?, 'admin', ?)
+        """, (org_id, get_current_user_id("admin"), f"Reassigned operator ID {operator_id} to counter ID {counter_id}"))
         conn.commit()
 
     flash("Operator desk assignment updated.", "success")
@@ -2311,25 +2516,26 @@ def admin_operator_assign(operator_id):
 @app.route("/admin/operators/toggle/<int:operator_id>", methods=["POST"])
 @login_required(role="admin")
 def admin_operator_toggle(operator_id):
+    org_id = get_current_org_id("admin")
     with db.get_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT full_name, is_active FROM users WHERE id = ? AND role = 'operator'", (operator_id,))
+        c.execute("SELECT full_name, is_active FROM users WHERE id = ? AND role = 'operator' AND organization_id = ?", (operator_id, org_id))
         op = c.fetchone()
         if not op:
             flash("Operator not found.", "danger")
             return redirect(url_for("admin_operators"))
 
         new_status = 0 if (op["is_active"] if "is_active" in op else 1) else 1
-        c.execute("UPDATE users SET is_active = ? WHERE id = ?", (new_status, operator_id))
+        c.execute("UPDATE users SET is_active = ? WHERE id = ? AND organization_id = ?", (new_status, operator_id, org_id))
 
         # If deactivating, clear counter assignment
         if new_status == 0:
-            c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ?", (operator_id,))
+            c.execute("UPDATE counters SET assigned_operator_id = NULL WHERE assigned_operator_id = ? AND organization_id = ?", (operator_id, org_id))
 
         c.execute("""
-            INSERT INTO audit_logs (action, user_id, user_role, details)
-            VALUES ('TOGGLE_OPERATOR_STATUS', ?, 'admin', ?)
-        """, (get_current_user_id("admin"), f"Set operator {op['full_name']} active state to {new_status}"))
+            INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+            VALUES (?, 'TOGGLE_OPERATOR_STATUS', ?, 'admin', ?)
+        """, (org_id, get_current_user_id("admin"), f"Set operator {op['full_name']} active state to {new_status}"))
         conn.commit()
 
     flash(f"Operator {op['full_name']} account status changed.", "info")
@@ -2343,7 +2549,9 @@ def admin_operator_toggle(operator_id):
 @app.route("/admin/reports")
 @login_required(role="admin")
 def admin_reports():
-    selected_date = request.args.get("date", datetime.date.today().isoformat())
+    org_id = get_current_org_id("admin")
+    today_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    selected_date = request.args.get("date", today_str)
     selected_dept = request.args.get("department_id", "all")
 
     with db.get_db() as conn:
@@ -2356,9 +2564,9 @@ def admin_reports():
             FROM tokens t
             JOIN counters c ON c.id = t.counter_id
             JOIN departments d ON d.id = t.department_id
-            WHERE date(t.created_at) = ?
+            WHERE date(t.created_at) = ? AND t.organization_id = ?
         """
-        params = [selected_date]
+        params = [selected_date, org_id]
 
         if selected_dept != "all":
             query += " AND t.department_id = ?"
@@ -2376,7 +2584,7 @@ def admin_reports():
         waiting = sum(1 for t in tokens if t["status"] == "waiting")
 
         # Department list for dropdown
-        c.execute("SELECT id, code, name FROM departments ORDER BY name")
+        c.execute("SELECT id, code, name FROM departments WHERE organization_id = ? ORDER BY name", (org_id,))
         departments = c.fetchall()
 
     return render_template(
@@ -2398,7 +2606,9 @@ def admin_reports():
 @app.route("/admin/reports/export.csv")
 @login_required(role="admin")
 def admin_reports_export_csv():
-    selected_date = request.args.get("date", datetime.date.today().isoformat())
+    org_id = get_current_org_id("admin")
+    today_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    selected_date = request.args.get("date", today_str)
     selected_dept = request.args.get("department_id", "all")
 
     with db.get_db() as conn:
@@ -2409,9 +2619,9 @@ def admin_reports_export_csv():
             FROM tokens t
             JOIN counters c ON c.id = t.counter_id
             JOIN departments d ON d.id = t.department_id
-            WHERE date(t.created_at) = ?
+            WHERE date(t.created_at) = ? AND t.organization_id = ?
         """
-        params = [selected_date]
+        params = [selected_date, org_id]
         if selected_dept != "all":
             query += " AND t.department_id = ?"
             params.append(int(selected_dept))
@@ -2448,6 +2658,7 @@ def admin_reports_export_csv():
 @app.route("/admin/settings", methods=["GET", "POST"])
 @login_required(role="admin")
 def admin_settings():
+    org_id = get_current_org_id("admin")
     if request.method == "POST":
         org_name = request.form.get("org_name", "").strip()
         org_subtitle = request.form.get("org_subtitle", "").strip()
@@ -2471,25 +2682,32 @@ def admin_settings():
 
         with db.get_db() as conn:
             c = conn.cursor()
+            # Update main organizations row
+            c.execute("""
+                UPDATE organizations
+                SET name = ?, subtitle = ?, tagline = ?, address = ?, support_email = ?, support_phone = ?
+                WHERE id = ?
+            """, (org_name, org_subtitle, org_tagline, org_address, org_support_email, org_support_phone, org_id))
+
             for k, v in updates:
                 c.execute("""
-                    INSERT INTO organization_settings (key, value)
-                    VALUES (?, ?)
-                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                """ if db.is_postgres() else """
-                    INSERT OR REPLACE INTO organization_settings (key, value)
-                    VALUES (?, ?)
-                """, (k, v))
+                    DELETE FROM organization_settings WHERE key = ? AND organization_id = ?
+                """, (k, org_id))
+                c.execute("""
+                    INSERT INTO organization_settings (organization_id, key, value)
+                    VALUES (?, ?, ?)
+                """, (org_id, k, v))
+
             c.execute("""
-                INSERT INTO audit_logs (action, user_id, user_role, details)
-                VALUES ('UPDATE_ORG_SETTINGS', ?, 'admin', ?)
-            """, (get_current_user_id("admin"), f"Updated branding for {org_name}"))
+                INSERT INTO audit_logs (organization_id, action, user_id, user_role, details)
+                VALUES (?, 'UPDATE_ORG_SETTINGS', ?, 'admin', ?)
+            """, (org_id, get_current_user_id("admin"), f"Updated branding for {org_name}"))
             conn.commit()
 
         flash("Organization settings and branding updated successfully!", "success")
         return redirect(url_for("admin_settings"))
 
-    settings = get_organization_settings()
+    settings = get_organization_settings(org_id)
     return render_template("admin_settings.html", settings=settings)
 
 
