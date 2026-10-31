@@ -7,9 +7,9 @@
   <!-- Admin Sidebar -->
   <aside class="app-sidebar">
     <div class="sidebar-user">
-      <strong style="color: var(--qx-navy); font-size: 0.95rem;">CGC System Admin</strong>
+      <strong style="color: var(--qx-navy); font-size: 0.95rem;">System Admin</strong>
       <span style="font-size: 0.78rem; color: var(--text-secondary);">Role: Central Queue Administrator</span>
-      <span style="font-size: 0.75rem; color: var(--qx-blue); font-weight: 700; margin-top: 0.2rem;">CGC University Mohali</span>
+      <span style="font-size: 0.75rem; color: var(--qx-blue); font-weight: 700; margin-top: 0.2rem;">{{ org['org_name'] }}</span>
     </div>
 
     <a href="{{ url_for('admin_portal') }}" class="sidebar-link active">📊 System Dashboard</a>
@@ -17,8 +17,9 @@
     <a href="{{ url_for('admin_counters') }}" class="sidebar-link">🪟 Service Counters</a>
     <a href="{{ url_for('admin_operators') }}" class="sidebar-link">👨‍💼 Operators</a>
     <a href="{{ url_for('admin_reports') }}" class="sidebar-link">📈 Reports & Export</a>
+    <a href="{{ url_for('admin_settings') }}" class="sidebar-link">⚙️ Organization & Branding</a>
     <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Public Live Counters</a>
-    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+    <a href="{{ url_for('logout', role='admin') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
   </aside>
 
   <!-- Admin Content -->

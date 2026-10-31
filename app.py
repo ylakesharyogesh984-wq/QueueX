@@ -287,42 +287,67 @@ def init_db():
         db.add_column_if_missing(c, "auth_sessions", "expires_at", "TIMESTAMP")
         conn.commit()
 
-        # 9. Performance Indexes (now safely run after column migrations)
+        # 9. Organization Settings Table (Configurable SaaS Organization branding)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS organization_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT UNIQUE NOT NULL,
+                value TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+        # Seed default general-purpose SaaS organization settings if empty
+        c.execute("SELECT COUNT(*) as cnt FROM organization_settings")
+        if c.fetchone()["cnt"] == 0:
+            default_org_settings = [
+                ("org_name", "Global Service Center"),
+                ("org_subtitle", "Smart Digital Queue & Service Management"),
+                ("org_tagline", "Real-Time Digital Queue Tracking & Service Excellence"),
+                ("org_address", "Central Headquarters • Main Executive Tower"),
+                ("org_support_email", "support@queuex.io"),
+                ("org_support_phone", "+1 (800) 555-0199")
+            ]
+            for key, val in default_org_settings:
+                c.execute("INSERT INTO organization_settings (key, value) VALUES (?, ?)", (key, val))
+            conn.commit()
+
+        # 10. Performance Indexes (now safely run after column migrations)
         c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_counter_status ON tokens (counter_id, status);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_student_status ON tokens (student_id, status);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_created ON tokens (created_at);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_role ON auth_sessions (session_token, role);")
         conn.commit()
 
-        # 10. Seed initial departments for CGC University Mohali (only if empty)
+        # 11. Seed initial demo departments (General-purpose multi-organization counters)
         c.execute("SELECT COUNT(*) as cnt FROM departments")
         if c.fetchone()["cnt"] == 0:
-            cgc_departments = [
-                ("ACCOUNTS", "Fee & Accounts Section", "Tuition, examination, and hostel fee settlement", "Block 1 Ground Floor"),
-                ("REGISTRAR", "Registrar & Student Documentation", "Degree verification, bonafide & migration certificates", "Admin Block Room 102"),
-                ("LIBRARY", "Central University Library", "Book issue/return, library cards, and clearance", "Central Library Block"),
-                ("EXAMINATION", "Examination & Records Cell", "Admit card clearance, marksheets, and re-evaluation", "Block 3 1st Floor"),
-                ("CRC", "Corporate Resource Center (Placements)", "Placement verification, NOC, and internship letters", "Block 5 3rd Floor"),
-                ("HOSTEL", "Hostel & Transport Administration", "Room allotment, gate passes, and bus passes", "Campus Support Office"),
+            default_departments = [
+                ("FINANCE", "Billing & Financial Services", "Payments, invoices, fee settlement, and accounts verification", "Tower A Ground Floor"),
+                ("RECORDS", "Customer Records & Documentation", "Identity verification, certifications, transcripts, and credentials", "Main Hall Room 101"),
+                ("SUPPORT", "Customer Care & Helpdesk", "General queries, technical assistance, service onboarding", "Customer Relations Wing"),
+                ("CONSULTING", "Advisory & Account Planning", "Specialist consultation, strategic accounts, and advisory", "Tower B 1st Floor"),
+                ("LOGISTICS", "Express Dispatch & Delivery", "Document pick-up, pass issuance, logistics clearance", "Logistics Hub East Gate"),
+                ("EXPRESS", "Rapid Inquiries Desk", "Quick tokens, status verifications, and pick-up slips", "Main Entry Lobby"),
             ]
-            for code, name, desc, bldg in cgc_departments:
+            for code, name, desc, bldg in default_departments:
                 c.execute("""
                     INSERT INTO departments (code, name, description, building_block)
                     VALUES (?, ?, ?, ?)
                 """, (code, name, desc, bldg))
             conn.commit()
 
-        # 10. Seed initial counters (only if empty)
+        # 12. Seed initial counters (only if empty)
         c.execute("SELECT COUNT(*) as cnt FROM counters")
         if c.fetchone()["cnt"] == 0:
             initial_counters = [
-                (1, "Fee Deposit Counter 1", "ACCOUNTS-W1", 8),
-                (1, "Scholarship & Concession Desk", "ACCOUNTS-W2", 12),
-                (2, "Bonafide & Character Certificate Window", "REG-W1", 5),
-                (2, "Degree & Transcript Dispatch Desk", "REG-W2", 7),
-                (3, "Book Issue & Circulation Desk", "LIB-W1", 4),
-                (4, "Admit Card Clearance Desk", "EXAM-W1", 6),
-                (5, "Placement NOC & Drive Verification Desk", "CRC-W1", 10),
+                (1, "Fee Deposit Counter 1", "FIN-W1", 8),
+                (1, "Accounts & Billing Desk 2", "FIN-W2", 10),
+                (2, "Certificates & Verification Window", "REC-W1", 5),
+                (2, "Records Dispatch Desk", "REC-W2", 7),
+                (3, "Customer Relations Desk", "SUP-W1", 5),
+                (4, "Advisory Consultation Room 1", "CON-W1", 12),
+                (5, "Express Clearance Window", "LOG-W1", 4),
             ]
             for dep_id, name, code, avg_m in initial_counters:
                 c.execute("""
@@ -340,13 +365,13 @@ def init_db():
             pass
 
         # 11. Seed / Upsert Default Admin (guarantee known working credentials)
-        c.execute("SELECT id FROM users WHERE email = 'admin@cgc.edu.in' OR identifier = 'ADM001'")
+        c.execute("SELECT id FROM users WHERE email IN ('admin@queuex.io', 'admin@cgc.edu.in') OR identifier = 'ADM001'")
         adm_row = c.fetchone()
         admin_pw_hash = generate_password_hash("Admin@QueueX2026")
         if not adm_row:
             c.execute("""
                 INSERT INTO users (email, password_hash, full_name, role, identifier, phone, is_active)
-                VALUES ('admin@cgc.edu.in', ?, 'CGC Central Queue Administrator', 'admin', 'ADM001', '0172-3984200', 1)
+                VALUES ('admin@cgc.edu.in', ?, 'Central Queue Administrator', 'admin', 'ADM001', '0172-3984200', 1)
             """, (admin_pw_hash,))
         else:
             c.execute("""
@@ -357,13 +382,13 @@ def init_db():
         conn.commit()
 
         # 12. Seed / Upsert Default Operator (guarantee known working credentials)
-        c.execute("SELECT id FROM users WHERE email = 'operator@cgc.edu.in' OR identifier = 'OP101'")
+        c.execute("SELECT id FROM users WHERE email IN ('operator@queuex.io', 'operator@cgc.edu.in') OR identifier = 'OP101'")
         op_row = c.fetchone()
         op_pw_hash = generate_password_hash("Operator@QueueX2026")
         if not op_row:
             c.execute("""
                 INSERT INTO users (email, password_hash, full_name, role, identifier, phone, is_active)
-                VALUES ('operator@cgc.edu.in', ?, 'Accounts Counter Officer', 'operator', 'OP101', '9876543210', 1)
+                VALUES ('operator@cgc.edu.in', ?, 'Service Counter Officer', 'operator', 'OP101', '9876543210', 1)
             """, (op_pw_hash,))
         else:
             c.execute("""
@@ -371,17 +396,17 @@ def init_db():
                 SET password_hash = ?, role = 'operator', identifier = 'OP101', is_active = 1
                 WHERE id = ?
             """, (op_pw_hash, op_row["id"]))
-        c.execute("UPDATE counters SET assigned_operator_id = (SELECT id FROM users WHERE email = 'operator@cgc.edu.in') WHERE code = 'ACCOUNTS-W1'")
+        c.execute("UPDATE counters SET assigned_operator_id = (SELECT id FROM users WHERE email IN ('operator@cgc.edu.in', 'operator@queuex.io') LIMIT 1) WHERE id = 1")
         conn.commit()
 
-        # 13. Seed / Upsert Demo Student (guarantee known working credentials)
-        c.execute("SELECT id FROM users WHERE email = 'student@cgc.edu.in' OR identifier = '2201045'")
+        # 13. Seed / Upsert Demo Customer / Student (guarantee known working credentials)
+        c.execute("SELECT id FROM users WHERE email IN ('student@queuex.io', 'student@cgc.edu.in') OR identifier = '2201045'")
         st_row = c.fetchone()
         st_pw_hash = generate_password_hash("Student@QueueX2026")
         if not st_row:
             c.execute("""
                 INSERT INTO users (email, password_hash, full_name, role, identifier, phone, department, course, semester, is_active)
-                VALUES ('student@cgc.edu.in', ?, 'Aarav Sharma', 'student', '2201045', '9812345678', 'CSE', 'B.Tech', 6, 1)
+                VALUES ('student@cgc.edu.in', ?, 'Aarav Sharma', 'student', '2201045', '9812345678', 'General', 'Client', 1, 1)
             """, (st_pw_hash,))
         else:
             c.execute("""
@@ -614,6 +639,28 @@ def login_required(role=None):
     return decorator
 
 
+def get_organization_settings():
+    """Retrieve dynamic organization settings with sensible SaaS defaults."""
+    defaults = {
+        "org_name": "Global Service Center",
+        "org_subtitle": "Smart Digital Queue & Service Management",
+        "org_tagline": "Real-Time Digital Queue Tracking & Service Excellence",
+        "org_address": "Central Headquarters • Main Executive Tower",
+        "org_support_email": "support@queuex.io",
+        "org_support_phone": "+1 (800) 555-0199"
+    }
+    try:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            c.execute("SELECT key, value FROM organization_settings")
+            rows = c.fetchall()
+            for r in rows:
+                defaults[r["key"]] = r["value"]
+    except Exception:
+        pass
+    return defaults
+
+
 @app.context_processor
 def inject_common_context():
     target_role = get_current_role()
@@ -637,7 +684,8 @@ def inject_common_context():
         "current_identifier": user_sess.get("user_identifier"),
         "active_roles": get_all_active_role_sessions(),
         "unread_notifications": unread_notifs,
-        "now": datetime.datetime.now()
+        "now": datetime.datetime.now(),
+        "org": get_organization_settings()
     }
 
 
@@ -2355,6 +2403,52 @@ def admin_reports_export_csv():
     )
 
 
+@app.route("/admin/settings", methods=["GET", "POST"])
+@login_required(role="admin")
+def admin_settings():
+    if request.method == "POST":
+        org_name = request.form.get("org_name", "").strip()
+        org_subtitle = request.form.get("org_subtitle", "").strip()
+        org_tagline = request.form.get("org_tagline", "").strip()
+        org_address = request.form.get("org_address", "").strip()
+        org_support_email = request.form.get("org_support_email", "").strip()
+        org_support_phone = request.form.get("org_support_phone", "").strip()
+
+        if not org_name:
+            flash("Organization name is required.", "danger")
+            return redirect(url_for("admin_settings"))
+
+        updates = [
+            ("org_name", org_name),
+            ("org_subtitle", org_subtitle),
+            ("org_tagline", org_tagline),
+            ("org_address", org_address),
+            ("org_support_email", org_support_email),
+            ("org_support_phone", org_support_phone)
+        ]
+
+        with db.get_db() as conn:
+            c = conn.cursor()
+            for k, v in updates:
+                c.execute("""
+                    INSERT INTO organization_settings (key, value)
+                    VALUES (?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """ if db.is_postgres() else """
+                    INSERT OR REPLACE INTO organization_settings (key, value)
+                    VALUES (?, ?)
+                """, (k, v))
+            c.execute("""
+                INSERT INTO audit_logs (action, user_id, user_role, details)
+                VALUES ('UPDATE_ORG_SETTINGS', ?, 'admin', ?)
+            """, (get_current_user_id("admin"), f"Updated branding for {org_name}"))
+            conn.commit()
+
+        flash("Organization settings and branding updated successfully!", "success")
+        return redirect(url_for("admin_settings"))
+
+    settings = get_organization_settings()
+    return render_template("admin_settings.html", settings=settings)
 
 
 # Auto-initialize database schema

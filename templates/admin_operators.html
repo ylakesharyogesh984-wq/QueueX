@@ -6,15 +6,17 @@
   
   <aside class="app-sidebar">
     <div class="sidebar-user">
-      <strong style="color: var(--qx-navy);">CGC System Admin</strong>
-      <span style="font-size: 0.78rem; color: var(--text-secondary);">Central Administration</span>
+      <strong style="color: var(--qx-navy);">System Admin</strong>
+      <span style="font-size: 0.78rem; color: var(--text-secondary);">{{ org['org_name'] }}</span>
     </div>
     <a href="{{ url_for('admin_portal') }}" class="sidebar-link">📊 System Dashboard</a>
     <a href="{{ url_for('admin_departments') }}" class="sidebar-link">🏢 Departments</a>
     <a href="{{ url_for('admin_counters') }}" class="sidebar-link">🪟 Service Counters</a>
     <a href="{{ url_for('admin_operators') }}" class="sidebar-link active">👨‍💼 Operators</a>
     <a href="{{ url_for('admin_reports') }}" class="sidebar-link">📈 Reports & Export</a>
-    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Board</a>
+    <a href="{{ url_for('admin_settings') }}" class="sidebar-link">⚙️ Organization & Branding</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Counters Board</a>
+    <a href="{{ url_for('logout', role='admin') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
   </aside>
 
   <main class="app-content">
@@ -45,7 +47,7 @@
           </div>
           <div class="form-group">
             <label class="form-label">Email Address *</label>
-            <input type="email" name="email" class="neu-input" placeholder="operator@cgc.edu.in" required>
+            <input type="email" name="email" class="neu-input" placeholder="operator@organization.com" required>
           </div>
         </div>
 

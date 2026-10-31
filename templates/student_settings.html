@@ -13,8 +13,8 @@
     <a href="{{ url_for('student_portal') }}" class="sidebar-link">🎟️ Queue Dashboard</a>
     <a href="{{ url_for('student_profile') }}" class="sidebar-link">👤 My Profile</a>
     <a href="{{ url_for('student_settings') }}" class="sidebar-link active">⚙️ Settings & Alerts</a>
-    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Counters</a>
-    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Counters Board</a>
+    <a href="{{ url_for('logout', role='student') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
   </aside>
 
   <main class="app-content">
@@ -69,18 +69,18 @@
         </div>
 
         <div class="neu-inset" style="padding: 1rem; margin-bottom: 1.5rem;">
-          <strong style="font-size: 0.95rem; color: var(--text-primary); display: block; margin-bottom: 0.25rem;">CGC Campus Support</strong>
+          <strong style="font-size: 0.95rem; color: var(--text-primary); display: block; margin-bottom: 0.25rem;">{{ org['org_name'] }} Support</strong>
           <p style="font-size: 0.8rem; color: var(--text-secondary);">
-            Need assistance with fee confirmation, transcript verification, or token queries?
+            Need assistance with verification, appointments, or token queries?
           </p>
           <div style="margin-top: 0.5rem; font-size: 0.82rem;">
-            📞 Helpdesk: <strong>0172-3984200</strong><br>
-            ✉️ Email: <strong>support@cgc.edu.in</strong>
+            📞 Helpdesk: <strong>{{ org['org_support_phone'] }}</strong><br>
+            ✉️ Email: <strong>{{ org['org_support_email'] }}</strong>
           </div>
         </div>
 
         <div style="text-align: center;">
-          <a href="{{ url_for('logout') }}" class="neu-btn neu-btn-danger" style="width: 100%;">
+          <a href="{{ url_for('logout', role='student') }}" class="neu-btn neu-btn-danger" style="width: 100%;">
             Sign Out of QueueX
           </a>
         </div>

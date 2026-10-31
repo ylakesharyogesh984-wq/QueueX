@@ -15,8 +15,8 @@
     <a href="{{ url_for('student_portal') }}" class="sidebar-link active">🎟️ Queue Dashboard</a>
     <a href="{{ url_for('student_profile') }}" class="sidebar-link">👤 My Profile</a>
     <a href="{{ url_for('student_settings') }}" class="sidebar-link">⚙️ Settings & Alerts</a>
-    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Counters</a>
-    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Counters Board</a>
+    <a href="{{ url_for('logout', role='student') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
   </aside>
 
   <!-- Main Portal Content -->
@@ -24,8 +24,8 @@
     
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
       <div>
-        <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Student Queue Portal</h2>
-        <p style="font-size: 0.88rem; color: var(--text-secondary);">CGC University Mohali • Real-Time Queue Tracker</p>
+        <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Customer / Student Queue Portal</h2>
+        <p style="font-size: 0.88rem; color: var(--text-secondary);">{{ org['org_name'] }} • Real-Time Queue Tracker</p>
       </div>
 
       {% if not active_token %}
@@ -106,7 +106,7 @@
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
         <div>
           <h3 style="font-size: 1.25rem; font-weight: 800; color: var(--qx-navy);">Generate Virtual Queue Token</h3>
-          <p style="font-size: 0.82rem; color: var(--text-secondary);">Select the desk you wish to visit at CGC University</p>
+          <p style="font-size: 0.82rem; color: var(--text-secondary);">Select the service desk you wish to visit at {{ org['org_name'] }}</p>
         </div>
       </div>
 

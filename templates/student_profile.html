@@ -13,15 +13,15 @@
     <a href="{{ url_for('student_portal') }}" class="sidebar-link">🎟️ Queue Dashboard</a>
     <a href="{{ url_for('student_profile') }}" class="sidebar-link active">👤 My Profile</a>
     <a href="{{ url_for('student_settings') }}" class="sidebar-link">⚙️ Settings & Alerts</a>
-    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Counters</a>
-    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Counters Board</a>
+    <a href="{{ url_for('logout', role='student') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
   </aside>
 
   <main class="app-content">
     
     <div style="margin-bottom: 2rem;">
-      <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Student Profile</h2>
-      <p style="font-size: 0.88rem; color: var(--text-secondary);">Manage your CGC University student records and queue contact details</p>
+      <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">User Profile</h2>
+      <p style="font-size: 0.88rem; color: var(--text-secondary);">Manage your contact details and queue notifications</p>
     </div>
 
     <div class="neu-card" style="max-width: 680px; padding: 2rem;">

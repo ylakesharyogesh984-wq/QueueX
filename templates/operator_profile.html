@@ -18,15 +18,15 @@
     <a href="{{ url_for('operator_portal') }}" class="sidebar-link">🖥️ Counter Operations</a>
     <a href="{{ url_for('operator_profile') }}" class="sidebar-link active">👤 Operator Profile</a>
     <a href="{{ url_for('operator_settings') }}" class="sidebar-link">⚙️ Account Settings</a>
-    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Board</a>
-    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Counters Board</a>
+    <a href="{{ url_for('logout', role='operator') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
   </aside>
 
   <main class="app-content">
     
     <div style="margin-bottom: 2rem;">
       <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Operator Profile</h2>
-      <p style="font-size: 0.88rem; color: var(--text-secondary);">Officer details and assigned CGC counter desk allocation</p>
+      <p style="font-size: 0.88rem; color: var(--text-secondary);">Officer details and assigned service counter terminal allocation</p>
     </div>
 
     <div class="neu-card" style="max-width: 640px; padding: 2rem;">

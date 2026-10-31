@@ -115,8 +115,8 @@ def main():
 
         print("Verifying Tab 1 after refresh...")
         assert "/admin" in tab_admin.url
-        assert "CGC System Admin" in admin_refreshed
-        print("✓ Tab 1 still shows CGC System Admin.")
+        assert "Central Queue Administrator" in admin_refreshed or "System Admin" in admin_refreshed
+        print("✓ Tab 1 still shows System Admin.")
 
         print("Verifying Tab 2 after refresh...")
         assert "/student" in tab_student.url
@@ -125,8 +125,8 @@ def main():
 
         print("Verifying Tab 3 after refresh...")
         assert "/operator" in tab_operator.url
-        assert "Accounts Counter Officer" in operator_refreshed
-        print("✓ Tab 3 still shows Accounts Counter Officer.")
+        assert "Service Counter Officer" in operator_refreshed or "Accounts Counter Officer" in operator_refreshed
+        print("✓ Tab 3 still shows Service Counter Officer.")
 
         print("\n--- STEP F: Log out from Student in Tab 2 ---")
         tab_student.goto(f"{base_url}/logout?role=student")
@@ -144,13 +144,13 @@ def main():
         tab_admin.reload()
         tab_admin.wait_for_load_state("networkidle")
         assert "/admin" in tab_admin.url
-        assert "CGC System Admin" in tab_admin.content()
+        assert "Central Queue Administrator" in tab_admin.content() or "System Admin" in tab_admin.content()
         print("✓ Admin tab STILL fully authenticated!")
 
         tab_operator.reload()
         tab_operator.wait_for_load_state("networkidle")
         assert "/operator" in tab_operator.url
-        assert "Accounts Counter Officer" in tab_operator.content()
+        assert "Service Counter Officer" in tab_operator.content() or "Accounts Counter Officer" in tab_operator.content()
         print("✓ Operator tab STILL fully authenticated!")
 
         print("\n--- STEP H: Race Condition Test with Simultaneous Logins ---")
@@ -177,7 +177,7 @@ def main():
         assert "/student" in sim_tab1.url
         assert "/admin" in sim_tab2.url
         assert "Aarav Sharma" in sim_tab1.content()
-        assert "CGC System Admin" in sim_tab2.content()
+        assert "Central Queue Administrator" in sim_tab2.content() or "System Admin" in sim_tab2.content()
         print("✓ Concurrent race condition test passed without collision!")
 
         browser.close()

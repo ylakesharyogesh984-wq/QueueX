@@ -13,8 +13,8 @@
     <a href="{{ url_for('operator_portal') }}" class="sidebar-link">🖥️ Counter Operations</a>
     <a href="{{ url_for('operator_profile') }}" class="sidebar-link">👤 Operator Profile</a>
     <a href="{{ url_for('operator_settings') }}" class="sidebar-link active">⚙️ Account Settings</a>
-    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Campus Board</a>
-    <a href="{{ url_for('logout') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Live Counters Board</a>
+    <a href="{{ url_for('logout', role='operator') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
   </aside>
 
   <main class="app-content">
@@ -69,17 +69,17 @@
         </div>
 
         <div class="neu-inset" style="padding: 1rem; margin-bottom: 1.5rem;">
-          <strong style="font-size: 0.95rem; color: var(--text-primary); display: block; margin-bottom: 0.25rem;">CGC IT & Queue Support</strong>
+          <strong style="font-size: 0.95rem; color: var(--text-primary); display: block; margin-bottom: 0.25rem;">{{ org['org_name'] }} Technical Support</strong>
           <p style="font-size: 0.8rem; color: var(--text-secondary);">
             Counter display screens, QR thermal scanner hardware issues, or printer connection inquiries.
           </p>
           <div style="margin-top: 0.5rem; font-size: 0.82rem;">
-            📞 IT Helpdesk: <strong>0172-3984200 (Ext. 104)</strong>
+            📞 Helpdesk: <strong>{{ org['org_support_phone'] }}</strong> • <span>{{ org['org_support_email'] }}</span>
           </div>
         </div>
 
         <div>
-          <a href="{{ url_for('logout') }}" class="neu-btn neu-btn-danger" style="width: 100%;">
+          <a href="{{ url_for('logout', role='operator') }}" class="neu-btn neu-btn-danger" style="width: 100%;">
             Sign Out of Operator Desk
           </a>
         </div>

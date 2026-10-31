@@ -1,24 +1,30 @@
 {% extends "base.html" %}
-{% block title %}Live Campus Counters – QueueX{% endblock %}
+{% block title %}Live Service Counters – QueueX{% endblock %}
 
 {% block content %}
 <div style="max-width: 1200px; margin: 2.5rem auto; padding: 0 1.5rem;">
   
   <!-- Hero Section -->
-  <section class="neu-card" style="padding: 3rem 2rem; text-align: center; margin-bottom: 2.5rem; background: linear-gradient(135deg, #f8fafc 0%, #edf2f7 100%);">
-    <div style="display: inline-block; padding: 0.35rem 1rem; border-radius: var(--radius-pill); background: #e0f2fe; color: #0284c7; font-weight: 700; font-size: 0.78rem; margin-bottom: 1rem;">
-      OFFICIAL CAMPUS VIRTUAL QUEUE
+  <section class="neu-card" style="padding: 3rem 2rem; text-align: center; margin-bottom: 2.5rem; background: linear-gradient(135deg, rgba(255,255,255,0.7) 0%, rgba(240,245,255,0.5) 100%);">
+    <div style="display: inline-block; padding: 0.35rem 1rem; border-radius: var(--radius-pill); background: rgba(37,99,235,0.1); color: var(--qx-blue); font-weight: 700; font-size: 0.78rem; margin-bottom: 1rem; border: 1px solid rgba(37,99,235,0.2);">
+      {{ org['org_name'] | upper }} • SMART VIRTUAL QUEUE
     </div>
     <h1 style="font-size: 2.5rem; font-weight: 800; color: var(--qx-navy); margin-bottom: 1rem; letter-spacing: -0.5px;">
-      Skip the Physical Queue
+      Skip the Physical Line
     </h1>
     <p style="font-size: 1.05rem; color: var(--text-secondary); max-width: 680px; margin: 0 auto 2rem;">
-      Generate digital tokens for Fee Accounts, Registrar, Examination, and Library desks across CGC University Mohali. Track your live queue position from your phone.
+      {{ org['org_tagline'] }}. Join any active service counter digitally and monitor your live queue position from any device.
     </p>
 
     <div style="display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap;">
-      {% if session.get('user_id') %}
-        <a href="{{ url_for('student_portal') }}" class="neu-btn neu-btn-primary" style="padding: 0.8rem 1.8rem;">Enter Student Portal</a>
+      {% if current_id %}
+        {% if current_role == 'student' %}
+          <a href="{{ url_for('student_portal') }}" class="neu-btn neu-btn-primary" style="padding: 0.8rem 1.8rem;">Enter Customer Portal</a>
+        {% elif current_role == 'operator' %}
+          <a href="{{ url_for('operator_portal') }}" class="neu-btn neu-btn-primary" style="padding: 0.8rem 1.8rem;">Enter Operator Desk</a>
+        {% elif current_role == 'admin' %}
+          <a href="{{ url_for('admin_portal') }}" class="neu-btn neu-btn-primary" style="padding: 0.8rem 1.8rem;">Enter Admin Dashboard</a>
+        {% endif %}
       {% else %}
         <a href="{{ url_for('register') }}" class="neu-btn neu-btn-primary" style="padding: 0.8rem 1.8rem;">Get Token / Register</a>
         <a href="{{ url_for('login') }}" class="neu-btn" style="padding: 0.8rem 1.8rem;">Sign In</a>
@@ -30,7 +36,7 @@
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
     <div>
       <h2 style="font-size: 1.5rem; font-weight: 800; color: var(--qx-navy);">Active Service Counters</h2>
-      <p style="font-size: 0.85rem; color: var(--text-secondary);">Real-time status across campus blocks</p>
+      <p style="font-size: 0.85rem; color: var(--text-secondary);">Real-time status across service terminals</p>
     </div>
   </div>
 

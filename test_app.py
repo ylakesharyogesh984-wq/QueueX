@@ -3,8 +3,15 @@ QueueX Test Suite - Phase 1 Foundation & Phase 2/3 Student Portal Verification
 """
 
 import os
+import resource
 import tempfile
 import unittest
+
+try:
+    _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(8192, _hard), _hard))
+except Exception:
+    pass
 
 import app as queuex
 import db
@@ -101,9 +108,9 @@ class QueueXComprehensiveTestCase(unittest.TestCase):
         resp = self.client.get("/student/dashboard")
         self.assertEqual(resp.status_code, 200)
         html = resp.get_data(as_text=True)
-        self.assertIn("Student Queue Portal", html)
+        self.assertIn("Customer / Student Queue Portal", html)
         self.assertIn("Aarav Sharma", html)
-        self.assertIn("Fee &amp; Accounts Section", html)
+        self.assertTrue("Fee &amp; Accounts Section" in html or "Billing &amp; Financial Services" in html)
 
     def test_token_generation_workflow(self):
         """Student generates a token for Counter 1, then verifies status and QR."""
@@ -206,8 +213,8 @@ class QueueXComprehensiveTestCase(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         html = resp.get_data(as_text=True)
         self.assertIn("Counter Desk Operations", html)
-        self.assertIn("ACCOUNTS-W1", html)
-        self.assertIn("Accounts Counter Officer", html)
+        self.assertTrue("ACCOUNTS-W1" in html or "FIN-W1" in html)
+        self.assertTrue("Accounts Counter Officer" in html or "Service Counter Officer" in html)
 
     def test_operator_call_next_and_complete(self):
         """Student generates token, operator calls next, and completes service."""
@@ -408,6 +415,24 @@ class QueueXComprehensiveTestCase(unittest.TestCase):
         csv_text = csv_resp.get_data(as_text=True)
         self.assertIn("Token ID,Token Number,Department", csv_text)
         self.assertIn("CSV Report Verification", csv_text)
+
+    def test_admin_settings_branding(self):
+        """Admin can configure dynamic SaaS organization branding and details."""
+        self.login_admin()
+        resp = self.client.get("/admin/settings")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Organization & SaaS Branding", resp.get_data(as_text=True))
+
+        post_resp = self.client.post("/admin/settings", data={
+            "org_name": "Apex Health Systems",
+            "org_subtitle": "Clinical Care & Patient Flow",
+            "org_tagline": "Next-Gen Healthcare Virtual Queue",
+            "org_address": "Medical Plaza • Suite 400",
+            "org_support_email": "help@apexhealth.com",
+            "org_support_phone": "+1 (888) 555-0100"
+        }, follow_redirects=True)
+        self.assertEqual(post_resp.status_code, 200)
+        self.assertIn("Apex Health Systems", post_resp.get_data(as_text=True))
 
     def test_admin_access_control(self):
         """Students and Operators are strictly blocked from admin routes."""
@@ -770,14 +795,14 @@ class QueueXComprehensiveTestCase(unittest.TestCase):
         self.assertEqual(refresh_op.status_code, 200)
         op_content = refresh_op.get_data(as_text=True)
         self.assertIn("Operator Dashboard", op_content)
-        self.assertIn("Accounts Counter Officer", op_content)
+        self.assertTrue("Service Counter Officer" in op_content or "Accounts Counter Officer" in op_content)
 
         # Step 6: Refresh / access Tab 3 (Admin Dashboard) -> Should still be Admin
         refresh_adm = self.client.get("/admin/dashboard")
         self.assertEqual(refresh_adm.status_code, 200)
         adm_content = refresh_adm.get_data(as_text=True)
         self.assertIn("Central Admin Console", adm_content)
-        self.assertIn("CGC System Admin", adm_content)
+        self.assertTrue("Central Queue Administrator" in adm_content or "System Admin" in adm_content)
 
         # Step 7: Logout from Tab 1 (Student logout)
         logout_st = self.client.get("/logout?role=student", follow_redirects=True)
@@ -791,12 +816,12 @@ class QueueXComprehensiveTestCase(unittest.TestCase):
         op_after_st_logout = self.client.get("/operator/dashboard")
         self.assertEqual(op_after_st_logout.status_code, 200)
         self.assertIn("Operator Dashboard", op_after_st_logout.get_data(as_text=True))
-        self.assertIn("Accounts Counter Officer", op_after_st_logout.get_data(as_text=True))
+        self.assertTrue("Service Counter Officer" in op_after_st_logout.get_data(as_text=True) or "Accounts Counter Officer" in op_after_st_logout.get_data(as_text=True))
 
         adm_after_st_logout = self.client.get("/admin/dashboard")
         self.assertEqual(adm_after_st_logout.status_code, 200)
         self.assertIn("Central Admin Console", adm_after_st_logout.get_data(as_text=True))
-        self.assertIn("CGC System Admin", adm_after_st_logout.get_data(as_text=True))
+        self.assertTrue("Central Queue Administrator" in adm_after_st_logout.get_data(as_text=True) or "System Admin" in adm_after_st_logout.get_data(as_text=True))
 
         # Step 9: Logout Operator
         logout_op = self.client.get("/logout?role=operator", follow_redirects=True)
@@ -808,7 +833,7 @@ class QueueXComprehensiveTestCase(unittest.TestCase):
         adm_after_op_logout = self.client.get("/admin/dashboard")
         self.assertEqual(adm_after_op_logout.status_code, 200)
         self.assertIn("Central Admin Console", adm_after_op_logout.get_data(as_text=True))
-        self.assertIn("CGC System Admin", adm_after_op_logout.get_data(as_text=True))
+        self.assertTrue("Central Queue Administrator" in adm_after_op_logout.get_data(as_text=True) or "System Admin" in adm_after_op_logout.get_data(as_text=True))
 
         # Step 10: Logout Admin
         logout_adm = self.client.get("/logout?role=admin", follow_redirects=True)

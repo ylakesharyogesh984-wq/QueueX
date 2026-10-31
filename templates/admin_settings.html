@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Organization Settings – QueueX{% endblock %}
+
+{% block content %}
+<div class="app-layout">
+  
+  <!-- Admin Sidebar -->
+  <aside class="app-sidebar">
+    <div class="sidebar-user">
+      <strong style="color: var(--qx-navy); font-size: 0.95rem;">System Admin</strong>
+      <span style="font-size: 0.78rem; color: var(--text-secondary);">Role: Central Queue Administrator</span>
+      <span style="font-size: 0.75rem; color: var(--qx-blue); font-weight: 700; margin-top: 0.2rem;">{{ org['org_name'] }}</span>
+    </div>
+
+    <a href="{{ url_for('admin_portal') }}" class="sidebar-link">📊 System Dashboard</a>
+    <a href="{{ url_for('admin_departments') }}" class="sidebar-link">🏢 Departments</a>
+    <a href="{{ url_for('admin_counters') }}" class="sidebar-link">🪟 Service Counters</a>
+    <a href="{{ url_for('admin_operators') }}" class="sidebar-link">👨‍💼 Operators</a>
+    <a href="{{ url_for('admin_reports') }}" class="sidebar-link">📈 Reports & Export</a>
+    <a href="{{ url_for('admin_settings') }}" class="sidebar-link active">⚙️ Organization & Branding</a>
+    <a href="{{ url_for('index') }}" class="sidebar-link">🏢 Public Live Counters</a>
+    <a href="{{ url_for('logout', role='admin') }}" class="sidebar-link" style="color: var(--danger);">🚪 Sign Out</a>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="app-content">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
+      <div>
+        <h2 style="font-size: 1.8rem; font-weight: 800; color: var(--qx-navy);">Organization & SaaS Branding</h2>
+        <p style="font-size: 0.88rem; color: var(--text-secondary);">Configure company name, portals branding, contact details, and platform identity</p>
+      </div>
+
+      <div>
+        <a href="{{ url_for('admin_portal') }}" class="neu-btn" style="font-size: 0.85rem;">← Back to Dashboard</a>
+      </div>
+    </div>
+
+    <div class="neu-card" style="padding: 2rem; max-width: 800px;">
+      <form method="POST" action="{{ url_for('admin_settings') }}">
+        
+        <div class="form-group">
+          <label class="form-label">Organization / Business Name *</label>
+          <input type="text" name="org_name" class="neu-input" value="{{ settings['org_name'] }}" required placeholder="e.g. Metro General Hospital or Global Commercial Bank">
+          <small style="color: var(--text-secondary); font-size: 0.78rem;">Displayed across all portals, header branding, and digital tokens</small>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Organization Subtitle / Division</label>
+          <input type="text" name="org_subtitle" class="neu-input" value="{{ settings['org_subtitle'] }}" placeholder="e.g. Smart Virtual Queue & Customer Flow Management">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Platform Tagline / Description</label>
+          <input type="text" name="org_tagline" class="neu-input" value="{{ settings['org_tagline'] }}" placeholder="e.g. Real-Time Digital Queue Tracking & Service Excellence">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Campus / Headquarters Location</label>
+          <input type="text" name="org_address" class="neu-input" value="{{ settings['org_address'] }}" placeholder="e.g. Main Operations Complex • Building 4">
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label">Central Support Email</label>
+            <input type="email" name="org_support_email" class="neu-input" value="{{ settings['org_support_email'] }}" placeholder="support@company.com">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Helpdesk Helpline Phone</label>
+            <input type="text" name="org_support_phone" class="neu-input" value="{{ settings['org_support_phone'] }}" placeholder="+1 (800) 555-0199">
+          </div>
+        </div>
+
+        <div style="margin-top: 1.5rem; text-align: right;">
+          <button type="submit" class="neu-btn neu-btn-primary" style="padding: 0.75rem 2rem;">💾 Save Branding & Settings</button>
+        </div>
+
+      </form>
+    </div>
+
+  </main>
+</div>
+{% endblock %}
