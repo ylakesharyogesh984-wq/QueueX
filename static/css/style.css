@@ -485,16 +485,22 @@ a {
 @media (max-width: 900px) {
   .app-layout {
     flex-direction: column;
-    padding: 0 1rem;
+    padding: 0 0.75rem;
     gap: 1rem;
+    max-width: 100vw;
+    box-sizing: border-box;
   }
   .app-sidebar {
     width: 100%;
     border-right: none;
     border-bottom: 1px solid var(--border-glass);
+    box-sizing: border-box;
   }
   .app-content {
     padding: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
   }
   .mobile-toggle-btn {
     display: inline-flex;
@@ -513,6 +519,7 @@ a {
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
     border-bottom: 1px solid var(--border-glass);
     gap: 0.75rem;
+    box-sizing: border-box;
   }
   .nav-links.nav-open {
     display: flex;
@@ -528,17 +535,26 @@ a {
   }
 }
 
-/* Touch targets and button wrapping on mobile */
+/* Touch targets, card padding and button wrapping on mobile */
 @media (max-width: 600px) {
+  html, body {
+    overflow-x: hidden;
+    max-width: 100vw;
+  }
   .stat-grid {
     grid-template-columns: 1fr;
+    gap: 1rem;
   }
   .neu-card {
-    padding: 1.25rem 1rem;
+    padding: 1rem 0.85rem;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow-x: auto;
   }
   .neu-btn {
     width: 100%;
     justify-content: center;
+    box-sizing: border-box;
   }
   div[style*="display: flex; gap:"] {
     flex-wrap: wrap !important;
