@@ -449,12 +449,16 @@ class QueueXComprehensiveTestCase(unittest.TestCase):
 
         def generate_for_student(idx, uid):
             with queuex.app.test_client() as c_thread:
-                with c_thread.session_transaction() as sess:
-                    sess["user_id"] = uid
-                    sess["user_name"] = f"Student {idx}"
-                    sess["user_role"] = "student"
-                    sess["user_identifier"] = f"CGC2026CC{idx:03d}"
-                    sess["user_email"] = f"concurrent_student_{idx}@cgc.edu.in"
+                # Set server-side session token cookie
+                token = f"test_session_token_concurrent_{idx}"
+                c_thread.set_cookie(queuex.SESSION_COOKIE_NAME, token)
+                with queuex.db.get_db() as conn:
+                    c = conn.cursor()
+                    c.execute("""
+                        INSERT OR REPLACE INTO auth_sessions (session_token, role, user_id, user_name, user_email, user_identifier, expires_at)
+                        VALUES (?, 'student', ?, ?, ?, ?, datetime('now', '+7 days'))
+                    """, (token, uid, f"Student {idx}", f"concurrent_student_{idx}@cgc.edu.in", f"CGC2026CC{idx:03d}"))
+                    conn.commit()
 
                 resp = c_thread.post("/student/generate-token", data={"counter_id": "1", "service_reason": f"Concurrency Test {idx}"}, follow_redirects=True)
                 return resp.status_code

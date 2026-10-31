@@ -36,8 +36,8 @@
         <ul class="nav-links" id="nav-links">
           <li class="nav-item"><a href="{{ url_for('index') }}">Live Counters</a></li>
           
-          {% set current_portal_role = current_role or session.get('user_role') %}
-          {% if current_id or session.get('user_id') %}
+          {% set current_portal_role = current_role %}
+          {% if current_id %}
             {% if current_portal_role == 'student' %}
               <li class="nav-item"><a href="{{ url_for('student_portal') }}">Dashboard</a></li>
               <li class="nav-item"><a href="{{ url_for('student_profile') }}">Profile</a></li>

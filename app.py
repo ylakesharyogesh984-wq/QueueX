@@ -257,13 +257,44 @@ def init_db():
         db.add_column_if_missing(c, "audit_logs", "created_at", "TIMESTAMP")
         conn.commit()
 
-        # 8. Performance Indexes (now safely run after column migrations)
+        # 8. Server-Side Authentication Sessions (Atomic Multi-Tab Role Sessions)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_token TEXT NOT NULL,
+                role TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                user_name TEXT NOT NULL,
+                user_email TEXT NOT NULL,
+                user_identifier TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                CONSTRAINT uq_session_token_role UNIQUE (session_token, role)
+            )
+        """)
+        conn.commit()
+
+        # Migrate auth_sessions columns if upgrading
+        db.add_column_if_missing(c, "auth_sessions", "session_token", "TEXT")
+        db.add_column_if_missing(c, "auth_sessions", "role", "TEXT")
+        db.add_column_if_missing(c, "auth_sessions", "user_id", "INTEGER")
+        db.add_column_if_missing(c, "auth_sessions", "user_name", "TEXT")
+        db.add_column_if_missing(c, "auth_sessions", "user_email", "TEXT")
+        db.add_column_if_missing(c, "auth_sessions", "user_identifier", "TEXT")
+        db.add_column_if_missing(c, "auth_sessions", "created_at", "TIMESTAMP")
+        db.add_column_if_missing(c, "auth_sessions", "last_active", "TIMESTAMP")
+        db.add_column_if_missing(c, "auth_sessions", "expires_at", "TIMESTAMP")
+        conn.commit()
+
+        # 9. Performance Indexes (now safely run after column migrations)
         c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_counter_status ON tokens (counter_id, status);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_student_status ON tokens (student_id, status);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_created ON tokens (created_at);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_role ON auth_sessions (session_token, role);")
         conn.commit()
 
-        # 9. Seed initial departments for CGC University Mohali (only if empty)
+        # 10. Seed initial departments for CGC University Mohali (only if empty)
         c.execute("SELECT COUNT(*) as cnt FROM departments")
         if c.fetchone()["cnt"] == 0:
             cgc_departments = [
@@ -362,11 +393,41 @@ def init_db():
 
 
 # -------------------------------------------------------------
-# ROLE-BASED ACCESS CONTROL & MULTI-TAB SESSION ISOLATION
+# ROLE-BASED ACCESS CONTROL & MULTI-TAB SESSION ISOLATION (SERVER-SIDE)
 # -------------------------------------------------------------
 
+SESSION_COOKIE_NAME = "qx_browser_session"
+SESSION_LIFETIME_DAYS = 7
+
+
+def get_or_create_browser_session_token():
+    """Retrieve or initialize the persistent browser session identifier cookie."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token or len(token) < 24:
+        token = secrets.token_urlsafe(32)
+        request._qx_new_session_token = token
+    return token
+
+
+@app.after_request
+def save_browser_session_cookie(response):
+    """Ensure the browser session token cookie is persisted across all requests."""
+    new_token = getattr(request, "_qx_new_session_token", None)
+    if new_token:
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            new_token,
+            max_age=SESSION_LIFETIME_DAYS * 86400,
+            httponly=True,
+            samesite="Lax",
+            secure=cookie_secure,
+            path="/"
+        )
+    return response
+
+
 def get_current_role():
-    """Determine role based on requested path prefix."""
+    """Determine role strictly based on requested path prefix or explicit query/form param."""
     path = request.path
     if path.startswith("/admin"):
         return "admin"
@@ -374,25 +435,106 @@ def get_current_role():
         return "operator"
     elif path.startswith("/student") or path.startswith("/api/student"):
         return "student"
-    return session.get("last_active_role") or "student"
+    
+    # Check explicit param if outside role-prefixed path
+    param_role = request.args.get("role") or request.form.get("role")
+    if param_role in ("student", "operator", "admin"):
+        return param_role
+    return "student"
 
 
 def get_role_session(role=None):
-    """Retrieve the independent authenticated user session dictionary for the given role."""
+    """
+    Retrieve the independent authenticated user session dictionary for the given role
+    directly from the PostgreSQL/SQLite server-side auth_sessions store.
+    """
     target_role = role or get_current_role()
-    roles_dict = session.get("roles")
-    if isinstance(roles_dict, dict) and target_role in roles_dict:
-        return roles_dict[target_role]
-    # Backward compatibility with legacy unnested session keys
-    if session.get("user_role") == target_role and "user_id" in session:
-        return {
-            "user_id": session.get("user_id"),
-            "user_name": session.get("user_name"),
-            "user_email": session.get("user_email"),
-            "user_role": session.get("user_role"),
-            "user_identifier": session.get("user_identifier")
-        }
+    session_token = get_or_create_browser_session_token()
+    now_dt = datetime.datetime.now()
+
+    try:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT user_id, user_name, user_email, role as user_role, user_identifier, expires_at
+                FROM auth_sessions
+                WHERE session_token = ? AND role = ?
+            """, (session_token, target_role))
+            row = c.fetchone()
+            if row:
+                # Check expiration
+                expires_at_raw = row["expires_at"]
+                if isinstance(expires_at_raw, str):
+                    try:
+                        exp_dt = datetime.datetime.fromisoformat(expires_at_raw)
+                    except Exception:
+                        exp_dt = now_dt + datetime.timedelta(days=SESSION_LIFETIME_DAYS)
+                elif isinstance(expires_at_raw, datetime.datetime):
+                    exp_dt = expires_at_raw
+                else:
+                    exp_dt = now_dt + datetime.timedelta(days=SESSION_LIFETIME_DAYS)
+
+                # Strip timezone if compared with naive now_dt
+                if exp_dt.tzinfo is not None:
+                    exp_dt = exp_dt.replace(tzinfo=None)
+
+                if exp_dt > now_dt:
+                    return {
+                        "user_id": row["user_id"],
+                        "user_name": row["user_name"],
+                        "user_email": row["user_email"],
+                        "user_role": row["user_role"],
+                        "user_identifier": row["user_identifier"]
+                    }
+                else:
+                    # Expired session: prune
+                    c.execute("DELETE FROM auth_sessions WHERE session_token = ? AND role = ?", (session_token, target_role))
+                    conn.commit()
+    except Exception as e:
+        app.logger.warning(f"Error reading server auth_session for {target_role}: {e}")
+
     return None
+
+
+def get_all_active_role_sessions():
+    """Retrieve all active role sessions associated with the current browser session token."""
+    session_token = get_or_create_browser_session_token()
+    now_dt = datetime.datetime.now()
+    active = {}
+    try:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT user_id, user_name, user_email, role as user_role, user_identifier, expires_at
+                FROM auth_sessions
+                WHERE session_token = ?
+            """, (session_token,))
+            rows = c.fetchall()
+            for r in rows:
+                expires_at_raw = r["expires_at"]
+                if isinstance(expires_at_raw, str):
+                    try:
+                        exp_dt = datetime.datetime.fromisoformat(expires_at_raw)
+                    except Exception:
+                        exp_dt = now_dt + datetime.timedelta(days=SESSION_LIFETIME_DAYS)
+                elif isinstance(expires_at_raw, datetime.datetime):
+                    exp_dt = expires_at_raw
+                else:
+                    exp_dt = now_dt + datetime.timedelta(days=SESSION_LIFETIME_DAYS)
+                if exp_dt.tzinfo is not None:
+                    exp_dt = exp_dt.replace(tzinfo=None)
+
+                if exp_dt > now_dt:
+                    active[r["user_role"]] = {
+                        "user_id": r["user_id"],
+                        "user_name": r["user_name"],
+                        "user_email": r["user_email"],
+                        "user_role": r["user_role"],
+                        "user_identifier": r["user_identifier"]
+                    }
+    except Exception as e:
+        app.logger.warning(f"Error fetching active sessions: {e}")
+    return active
 
 
 def get_current_user_id(role=None):
@@ -400,61 +542,48 @@ def get_current_user_id(role=None):
     sess = get_role_session(role)
     if sess and "user_id" in sess:
         return sess["user_id"]
-    return session.get("user_id")
+    return None
 
 
 def set_role_session(user):
-    """Store or update user login session partitioned by role."""
-    roles_dict = session.get("roles")
-    if not isinstance(roles_dict, dict):
-        roles_dict = {}
-
+    """
+    Store or update user login session atomically in PostgreSQL/SQLite auth_sessions table.
+    This guarantees that concurrent logins in different tabs cannot overwrite each other.
+    """
     role = user["role"]
-    roles_dict[role] = {
-        "user_id": user["id"],
-        "user_name": user["full_name"],
-        "user_email": user["email"],
-        "user_role": role,
-        "user_identifier": user["identifier"]
-    }
-    session["roles"] = roles_dict
-    session["last_active_role"] = role
+    session_token = get_or_create_browser_session_token()
+    expires_at = datetime.datetime.now() + datetime.timedelta(days=SESSION_LIFETIME_DAYS)
 
-    # Also keep top-level keys synced to the most recently active role for compatibility
-    session["user_id"] = user["id"]
-    session["user_name"] = user["full_name"]
-    session["user_email"] = user["email"]
-    session["user_role"] = role
-    session["user_identifier"] = user["identifier"]
+    with db.get_db() as conn:
+        c = conn.cursor()
+        # Atomic upsert pattern: check existing role session for this browser token
+        c.execute("SELECT id FROM auth_sessions WHERE session_token = ? AND role = ?", (session_token, role))
+        existing = c.fetchone()
+        if existing:
+            c.execute("""
+                UPDATE auth_sessions
+                SET user_id = ?, user_name = ?, user_email = ?, user_identifier = ?, last_active = CURRENT_TIMESTAMP, expires_at = ?
+                WHERE id = ?
+            """, (user["id"], user["full_name"], user["email"], user["identifier"], expires_at, existing["id"]))
+        else:
+            c.execute("""
+                INSERT INTO auth_sessions (session_token, role, user_id, user_name, user_email, user_identifier, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (session_token, role, user["id"], user["full_name"], user["email"], user["identifier"], expires_at))
+        conn.commit()
 
 
 def clear_role_session(role=None):
-    """Clear session only for the specified role, preserving other active tabs."""
+    """Clear session only for the specified role in auth_sessions, preserving other active tabs."""
     target_role = role or get_current_role()
-    roles_dict = session.get("roles")
-    if isinstance(roles_dict, dict) and target_role in roles_dict:
-        del roles_dict[target_role]
-        session["roles"] = roles_dict
-
-    # If the active top-level role matches the one being logged out, reset or switch top-level
-    if session.get("user_role") == target_role:
-        remaining_roles = session.get("roles") or {}
-        if remaining_roles:
-            # Switch top-level to another remaining active role
-            next_role, next_user = next(iter(remaining_roles.items()))
-            session["user_id"] = next_user["user_id"]
-            session["user_name"] = next_user["user_name"]
-            session["user_email"] = next_user["user_email"]
-            session["user_role"] = next_user["user_role"]
-            session["user_identifier"] = next_user["user_identifier"]
-            session["last_active_role"] = next_role
-        else:
-            session.pop("user_id", None)
-            session.pop("user_name", None)
-            session.pop("user_email", None)
-            session.pop("user_role", None)
-            session.pop("user_identifier", None)
-            session.pop("last_active_role", None)
+    session_token = get_or_create_browser_session_token()
+    try:
+        with db.get_db() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM auth_sessions WHERE session_token = ? AND role = ?", (session_token, target_role))
+            conn.commit()
+    except Exception as e:
+        app.logger.warning(f"Error clearing auth_session for {target_role}: {e}")
 
 
 def login_required(role=None):
@@ -465,23 +594,20 @@ def login_required(role=None):
             user_session = get_role_session(target_role)
 
             if not user_session:
-                # If logged into another role, redirect them safely to their own portal with an alert
-                active_roles = session.get("roles") or {}
+                # If the user is logged into another role, redirect with informative notice
+                active_roles = get_all_active_role_sessions()
                 if active_roles:
-                    user_role = session.get("user_role") or next(iter(active_roles.keys()))
                     flash("Unauthorized access for your account.", "danger")
-                    if user_role == "student":
+                    first_active = next(iter(active_roles.keys()))
+                    if first_active == "student":
                         return redirect(url_for("student_portal"))
-                    elif user_role == "operator":
+                    elif first_active == "operator":
                         return redirect(url_for("operator_portal"))
-                    elif user_role == "admin":
+                    elif first_active == "admin":
                         return redirect(url_for("admin_portal"))
 
                 flash(f"Please log in as {target_role.capitalize()} to access this tab.", "warning")
                 return redirect(url_for("login", role=target_role))
-
-            # Set role-scoped session for context processor and handlers
-            session["last_active_role"] = target_role
 
             return f(*args, **kwargs)
         return decorated_function
@@ -509,7 +635,7 @@ def inject_common_context():
         "current_role": user_sess.get("user_role"),
         "current_id": user_sess.get("user_id"),
         "current_identifier": user_sess.get("user_identifier"),
-        "active_roles": session.get("roles", {}),
+        "active_roles": get_all_active_role_sessions(),
         "unread_notifications": unread_notifs,
         "now": datetime.datetime.now()
     }
@@ -600,26 +726,17 @@ def service_worker():
 
 @app.route("/")
 def index():
-    # If the user has active role sessions, let them navigate directly
-    roles_dict = session.get("roles") or {}
-    last_role = session.get("last_active_role")
-    
-    if last_role and last_role in roles_dict:
-        if last_role == "student":
-            return redirect(url_for("student_portal"))
-        elif last_role == "operator":
-            return redirect(url_for("operator_portal"))
-        elif last_role == "admin":
-            return redirect(url_for("admin_portal"))
-
-    if "user_id" in session:
-        role = session.get("user_role")
-        if role == "student":
-            return redirect(url_for("student_portal"))
-        elif role == "operator":
-            return redirect(url_for("operator_portal"))
-        elif role == "admin":
-            return redirect(url_for("admin_portal"))
+    # Only redirect from landing page if a specific role is explicitly requested or unambiguous
+    req_role = request.args.get("role")
+    if req_role:
+        role_sess = get_role_session(req_role)
+        if role_sess:
+            if req_role == "student":
+                return redirect(url_for("student_portal"))
+            elif req_role == "operator":
+                return redirect(url_for("operator_portal"))
+            elif req_role == "admin":
+                return redirect(url_for("admin_portal"))
 
     with db.get_db() as conn:
         c = conn.cursor()
@@ -1071,9 +1188,13 @@ def student_profile():
                 SET full_name = ?, phone = ?, department = ?, course = ?, semester = ?
                 WHERE id = ?
             """, (full_name, phone, department, course, semester, student_id))
+            c.execute("""
+                UPDATE auth_sessions
+                SET user_name = ?
+                WHERE user_id = ? AND role = 'student'
+            """, (full_name, student_id))
             conn.commit()
 
-            session["user_name"] = full_name
             flash("Profile updated successfully!", "success")
             return redirect(url_for("student_profile"))
 
@@ -1569,8 +1690,12 @@ def operator_profile():
                 return redirect(url_for("operator_profile"))
 
             c.execute("UPDATE users SET full_name = ?, phone = ? WHERE id = ?", (full_name, phone, operator_id))
+            c.execute("""
+                UPDATE auth_sessions
+                SET user_name = ?
+                WHERE user_id = ? AND role = 'operator'
+            """, (full_name, operator_id))
             conn.commit()
-            session["user_name"] = full_name
             flash("Profile updated successfully!", "success")
             return redirect(url_for("operator_profile"))
 
