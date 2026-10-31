@@ -11,8 +11,9 @@
 <link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
-<body>
+<body data-interface="public">
 
 <div class="navbar">
   <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
@@ -25,7 +26,7 @@
     </button>
   </div>
   <div class="nav-links" id="nav-links">
-    <button class="btn btn-outline btn-sm" id="install-app-btn" hidden>Install</button>
+    <button type="button" class="btn btn-outline btn-sm" id="install-app-btn" hidden>Install</button>
     <a href="{{ url_for('operator_login') }}" class="btn btn-outline btn-sm">Operator</a>
     <a href="{{ url_for('admin_login') }}" class="btn btn-outline btn-sm">Admin</a>
     <a href="{{ url_for('student') }}" class="btn btn-primary btn-sm">Get Token</a>
@@ -34,22 +35,23 @@
 <div class="nav-backdrop" id="nav-backdrop"></div>
 
 <div class="hero">
-  <div class="eyebrow">● LIVE ACROSS 5 CAMPUS COUNTERS</div>
+  <div class="eyebrow">● LIVE ACROSS {{ counters|length }} CAMPUS COUNTERS</div>
   <h1>Skip the wait.<br><span>Not the line.</span></h1>
-  <p>QueueX replaces physical queues at your college counters with a live digital token — track your position from anywhere, in real time.</p>
+  <p>QueueX replaces physical lines at college counters with a live digital token pass. Track your position in real time from anywhere across campus.</p>
+  
   <div class="hero-ctas">
     <a href="{{ url_for('student') }}" class="btn btn-primary">Get Your Token →</a>
-    <a href="{{ url_for('operator_login') }}" class="btn btn-outline">Operator Login</a>
+    <a href="{{ url_for('operator_login') }}" class="btn btn-outline">Operator Console</a>
   </div>
 
   <div class="app-dock" aria-label="Quick actions">
     <a href="{{ url_for('student') }}" class="dock-item">
       <span class="dock-icon">#</span>
-      <span>Token</span>
+      <span>Get Token</span>
     </a>
     <a href="{{ url_for('operator_login') }}" class="dock-item">
       <span class="dock-icon">▶</span>
-      <span>Call</span>
+      <span>Call Next</span>
     </a>
     <a href="{{ url_for('admin_login') }}" class="dock-item">
       <span class="dock-icon">▥</span>
@@ -60,7 +62,7 @@
   <div class="queue-rail-wrap">
     <div class="queue-rail-label">
       <span>Accounts Office</span>
-      <span>Live Preview</span>
+      <span>Live Queue Stream</span>
     </div>
     <div class="queue-rail">
       <div class="rail-chip serving">#29</div>
@@ -79,23 +81,23 @@
   <div class="section-head">
     <div class="eyebrow" style="display:inline-block;">WHY QUEUEX</div>
     <h2>Built for how campuses actually move</h2>
-    <p>No apps to install, no hardware to buy — just a link that works on any phone.</p>
+    <p>Zero hardware footprint, zero app installation required — just a lightning-fast responsive interface with instantaneous WebSocket synchronization.</p>
   </div>
   <div class="grid-3">
     <div class="card feature-card">
       <div class="icon">⚡</div>
       <h3>Real-time, not polling</h3>
-      <p>Every call, skip, or reset pushes instantly to every open device using WebSockets — no manual refresh, ever.</p>
+      <p>Every ticket call, skip, or status change pushes instantaneously to every device screen using WebSockets — zero manual refresh required.</p>
     </div>
     <div class="card feature-card">
       <div class="icon">📊</div>
-      <h3>Live analytics</h3>
-      <p>Admins see busiest counters, average wait time, and peak hours the moment they happen.</p>
+      <h3>Live analytics cockpit</h3>
+      <p>Campus administrators monitor busiest counters, peak traffic hours, and average processing wait times the second they occur.</p>
     </div>
     <div class="card feature-card">
       <div class="icon">📱</div>
-      <h3>QR check-in</h3>
-      <p>Every token comes with a scannable QR code, so students can reopen their status instantly.</p>
+      <h3>Dynamic QR check-in</h3>
+      <p>Every token includes an instant scannable QR pass, allowing students to reopen their position on any mobile phone seamlessly.</p>
     </div>
   </div>
 </div>
@@ -109,19 +111,23 @@
     <div class="timeline">
       <div class="timeline-step">
         <div class="timeline-num">01</div>
-        <div><h4>Fill your details</h4><p>Name, roll number, and the counter you need — takes under a minute.</p></div>
+        <h4>Fill your details</h4>
+        <p>Name, roll number, and your destination counter — takes under 20 seconds.</p>
       </div>
       <div class="timeline-step">
         <div class="timeline-num">02</div>
-        <div><h4>Receive your token</h4><p>An instant digital number, plus a QR code to reopen your status later.</p></div>
+        <h4>Receive live pass</h4>
+        <p>An instant digital ticket plus a scannable QR code to reopen your queue status anytime.</p>
       </div>
       <div class="timeline-step">
         <div class="timeline-num">03</div>
-        <div><h4>Track live</h4><p>Watch "currently serving" update in real time from anywhere on campus.</p></div>
+        <h4>Track queue position</h4>
+        <p>Watch "Currently Serving" update dynamically while relaxing in the library or cafeteria.</p>
       </div>
       <div class="timeline-step">
         <div class="timeline-num">04</div>
-        <div><h4>Walk in on time</h4><p>Get an on-screen alert when your turn is close, and head over.</p></div>
+        <h4>Walk in right on time</h4>
+        <p>Get a glowing alert and chime when your turn approaches, and step directly to the counter.</p>
       </div>
     </div>
   </div>
@@ -129,13 +135,24 @@
 
 <div class="section">
   <div class="stats-bar">
-    <div class="stat"><div class="value">5</div><div class="label">Active Counters</div></div>
-    <div class="stat"><div class="value">0s</div><div class="label">Refresh Delay</div></div>
-    <div class="stat"><div class="value">24/7</div><div class="label">Token Access</div></div>
+    <div class="stat">
+      <div class="value">{{ counters|length }}</div>
+      <div class="label">Active Counters</div>
+    </div>
+    <div class="stat">
+      <div class="value">0s</div>
+      <div class="label">Refresh Delay</div>
+    </div>
+    <div class="stat">
+      <div class="value">24/7</div>
+      <div class="label">Token Access</div>
+    </div>
   </div>
 </div>
 
-<div class="footer-note" style="padding-bottom:40px;">QueueX — Skip the Queue. Save Your Time.</div>
+<div class="footer-note" style="padding-bottom:48px;">
+  QueueX — Skip the Queue. Save Your Time.
+</div>
 
 <script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
 <script src="{{ url_for('static', filename='js/landing.js') }}"></script>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#6366F1">
+<meta name="theme-color" content="#8B5CF6">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="QueueX">
 <title>Admin Login — QueueX</title>
@@ -11,36 +11,56 @@
 <link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
-<body>
+<body data-interface="admin">
 
 <div class="navbar">
   <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+  <div class="nav-actions">
+    <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
+    <button class="burger-btn" id="burger-btn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="nav-links">
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+    </button>
+  </div>
+  <div class="nav-links" id="nav-links">
+    <a href="{{ url_for('index') }}" class="btn btn-outline btn-sm">Home</a>
+    <a href="{{ url_for('admin_register') }}" class="btn btn-outline btn-sm">Register Admin</a>
+    <a href="{{ url_for('operator_login') }}" class="btn btn-outline btn-sm">Operator Login</a>
+  </div>
 </div>
+<div class="nav-backdrop" id="nav-backdrop"></div>
 
 <div class="container-narrow">
   <div class="card login-card">
-    <span class="badge-role">SUPER ADMIN ACCESS</span>
-    <h2 style="margin-top:14px;">Admin Login</h2>
-    <p class="sub">View analytics across all counters</p>
+    <span class="badge-role badge-role-admin">🛡️ SUPER ADMIN ACCESS</span>
+    <h2 style="margin-top:14px;">Command Center Login</h2>
+    <p class="sub">Sign in using your <strong>Email</strong>, <strong>Mobile Number</strong>, or <strong>Admin Username</strong></p>
 
     {% if error %}
-    <div class="error-msg">{{ error }}</div>
+    <div class="error-msg">⚠️ {{ error }}</div>
     {% endif %}
 
     <form method="POST">
-      <label>Username</label>
-      <input type="text" name="username" placeholder="superadmin" required>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="adm-id">Email, Mobile Number, or Admin Username</label>
+      <input type="text" id="adm-id" name="username" placeholder="e.g. superadmin or you@college.edu" required>
 
-      <label>Password</label>
-      <input type="password" name="password" placeholder="super123" required>
+      <label for="adm-pass">Password</label>
+      <input type="password" id="adm-pass" name="password" placeholder="••••••••" required>
 
-      <button type="submit" class="btn btn-primary btn-block" style="margin-top:24px;">Login</button>
+      <button type="submit" class="btn btn-primary btn-block" style="margin-top:24px;">Enter Command Center →</button>
     </form>
 
-    <p class="footer-note">Demo — username: superadmin, password: super123<br>(For demonstration only.)</p>
+    <p class="footer-note">
+      New administrative staff? <a href="{{ url_for('admin_register') }}" style="color:var(--purple-light); font-weight:600;">Register Admin Account</a><br>
+      Demo credentials: username: <code>superadmin</code>, password: <code>super123</code>
+    </p>
   </div>
 </div>
+<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
 </body>
 </html>

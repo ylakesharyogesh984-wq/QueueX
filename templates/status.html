@@ -3,45 +3,89 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#6366F1">
+<meta name="theme-color" content="#06B6D4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="QueueX">
-<title>Your Token — QueueX</title>
+<title>Your Token #{{ token }} — QueueX</title>
 <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
 <link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
-<body>
+<body data-interface="student">
 
 <input type="hidden" id="data-counter" value="{{ counter_slug }}">
 <input type="hidden" id="data-token" value="{{ token }}">
+<input type="hidden" id="data-owner" value="{{ '1' if is_owner else '0' }}">
 
 <div class="navbar">
   <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
-  <button class="icon-btn" id="theme-toggle">🌙</button>
+  <div class="nav-actions">
+    <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
+    <button class="burger-btn" id="burger-btn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="nav-links">
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+    </button>
+  </div>
+  <div class="nav-links" id="nav-links">
+    <a href="{{ url_for('index') }}" class="btn btn-outline btn-sm">Home</a>
+    <a href="{{ url_for('student') }}" class="btn btn-primary btn-sm">+ New Token</a>
+    <a href="{{ url_for('feedback', counter=counter_slug) }}" class="btn btn-outline btn-sm">Feedback</a>
+    {% if student_user %}
+      <a href="{{ url_for('my_tokens') }}" class="btn btn-outline btn-sm">My Tokens</a>
+      <a href="{{ url_for('student_logout') }}" class="btn btn-outline btn-sm">Logout</a>
+    {% else %}
+      <a href="{{ url_for('student_login') }}" class="btn btn-outline btn-sm">Login</a>
+    {% endif %}
+  </div>
 </div>
+<div class="nav-backdrop" id="nav-backdrop"></div>
 
 <div class="container-narrow">
   <div class="card">
-    <div class="status-hero">
-      <div class="counter-tag">{{ counter_name }}</div>
-      <div class="token-big">#{{ token }}</div>
-      <span class="badge badge-waiting" id="status-badge">Waiting</span>
-      {% if student_name %}
-      <p class="footer-note" style="margin-top:10px;">{{ student_name }} · Roll No: {{ roll_no }}</p>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+      <span class="badge-role badge-role-student">🎓 LIVE STUDENT PASS</span>
+      {% if is_owner %}
+      <span class="meta-chip" style="color:var(--emerald-light); font-weight:600;">✓ Verified Pass Holder</span>
       {% endif %}
     </div>
 
-    <div class="almost-alert" id="almost-turn">🔔 Almost your turn — please head to the counter</div>
+    <div class="status-hero">
+      <div class="counter-tag">{{ counter_name }}</div>
+      <div class="token-big">#{{ token }}</div>
+      <div>
+        {% if token_status == 'served' %}
+        <span class="badge badge-served" id="status-badge">Served ✓</span>
+        {% elif token_status == 'skipped' %}
+        <span class="badge badge-skipped" id="status-badge">Skipped</span>
+        {% elif token_status == 'cancelled' %}
+        <span class="badge badge-skipped" id="status-badge">Cancelled</span>
+        {% else %}
+        <span class="badge badge-waiting" id="status-badge">Waiting in Line</span>
+        {% endif %}
+      </div>
+
+      {% if student_name %}
+      <p class="footer-note" style="margin-top:14px; font-weight:600; font-size:14px; color:var(--text-primary);">
+        <span>{{ student_name }}</span>
+        {% if roll_no %} · <span style="font-family:var(--font-mono); color:var(--text-muted);">Roll: {{ roll_no }}</span>{% endif %}
+      </p>
+      {% endif %}
+    </div>
+
+    <div class="almost-alert" id="almost-turn">
+      🔔 Almost your turn — please head towards {{ counter_name }}!
+    </div>
 
     <div class="status-stats">
       <div class="stat-box">
-        <div class="label">Serving</div>
+        <div class="label">Now Serving</div>
         <div class="value" id="currently-serving">#0</div>
       </div>
       <div class="stat-box">
-        <div class="label">Ahead</div>
+        <div class="label">People Ahead</div>
         <div class="value amber" id="people-ahead">0</div>
       </div>
       <div class="stat-box">
@@ -50,15 +94,116 @@
       </div>
     </div>
 
-    <div class="qr-wrap" id="qr-code"></div>
+    <!-- QR CODE & DIRECT LINK CONTAINER -->
+    <div style="text-align:center; margin:24px 0 16px;">
+      <div class="qr-wrap" id="qr-code"></div>
+      <p style="font-size:12px; color:var(--text-muted); margin-top:8px;">
+        Scan with mobile camera to monitor your pass on your smartphone
+      </p>
+      
+      <div style="display:flex; justify-content:center; align-items:center; gap:8px; margin-top:10px;">
+        <input type="text" id="status-share-url" readonly style="max-width:280px; font-size:11.5px; font-family:var(--font-mono); padding:6px 10px; text-align:center;" value="">
+        <button type="button" class="btn btn-outline btn-sm" onclick="copyStatusUrl()">Copy Link</button>
+      </div>
+    </div>
 
-    <p class="footer-note">Live updates via WebSocket — no need to refresh.</p>
+    <!-- CANCELLATION DECK (AUTHORIZED USERS & WAITING ONLY) -->
+    {% if is_owner and token_status == 'waiting' %}
+    <div id="cancel-token-section" style="margin-top:24px; padding-top:20px; border-top:1px solid var(--glass-border); text-align:center;">
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+        Need to leave or no longer require service at this counter?
+      </p>
+      <form action="{{ url_for('cancel_token') }}" method="POST" id="cancel-token-form" onsubmit="return handleCancelToken(event)">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="counter" value="{{ counter_slug }}">
+        <input type="hidden" name="token" value="{{ token }}">
+        <button type="submit" class="btn btn-danger btn-sm" id="cancel-token-btn" style="padding:10px 24px; font-size:14px;">
+          ✕ Cancel My Waiting Token
+        </button>
+      </form>
+    </div>
+    {% endif %}
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:24px; padding-top:18px; border-top:1px solid var(--glass-border); flex-wrap:wrap; gap:10px;">
+      <a href="{{ url_for('feedback', counter=counter_slug) }}" style="font-size:13px; color:var(--cyan-light);">
+        💬 Share feedback about this counter →
+      </a>
+      <span class="footer-note" style="margin:0;">⚡ Live real-time WebSocket sync</span>
+    </div>
+
   </div>
 </div>
 
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="{{ url_for('static', filename='js/status.js') }}"></script>
+<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+<script>
+// Auto-populate direct URL
+document.addEventListener('DOMContentLoaded', () => {
+  const shareInput = document.getElementById('status-share-url');
+  if (shareInput) shareInput.value = window.location.href;
+});
+
+function copyStatusUrl() {
+  const shareInput = document.getElementById('status-share-url');
+  if (shareInput) {
+    shareInput.select();
+    navigator.clipboard.writeText(shareInput.value).then(() => {
+      alert('✓ Pass URL copied to clipboard!');
+    }).catch(() => {
+      document.execCommand('copy');
+      alert('✓ Pass URL copied to clipboard!');
+    });
+  }
+}
+
+function handleCancelToken(event) {
+  event.preventDefault();
+  if (!confirm('Are you sure you want to cancel your waiting token #{{ token }}? You will forfeit your position in line.')) {
+    return false;
+  }
+  const btn = document.getElementById('cancel-token-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Cancelling...';
+  }
+
+  fetch('/api/student/cancel-token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ counter: '{{ counter_slug }}', token: {{ token }} })
+  })
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) {
+        const badge = document.getElementById('status-badge');
+        if (badge) {
+          badge.textContent = 'Cancelled';
+          badge.className = 'badge badge-skipped';
+        }
+        const cancelSection = document.getElementById('cancel-token-section');
+        if (cancelSection) cancelSection.remove();
+        const aheadEl = document.getElementById('people-ahead');
+        if (aheadEl) aheadEl.textContent = '0';
+        const waitEl = document.getElementById('estimated-wait');
+        if (waitEl) waitEl.textContent = '0m';
+        alert('Your token has been successfully cancelled.');
+      } else {
+        alert(data.error || 'Failed to cancel token');
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '✕ Cancel My Waiting Token';
+        }
+      }
+    })
+    .catch(err => {
+      // Fallback submit regular form
+      document.getElementById('cancel-token-form').submit();
+    });
+  return false;
+}
+</script>
 </body>
 </html>

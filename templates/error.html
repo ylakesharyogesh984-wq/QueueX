@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#6366F1">
+<title>{{ title|default('Error') }} — QueueX</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body data-interface="public">
+<div class="navbar">
+  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+  <div class="nav-links">
+    <a href="{{ url_for('index') }}" class="btn btn-outline btn-sm">Portal Home</a>
+  </div>
+</div>
+
+<div class="container-narrow" style="padding-top: 60px;">
+  <div class="card offline-card" style="text-align: center; max-width: 480px; margin: 0 auto;">
+    <div class="app-icon-mark" style="background: rgba(239, 68, 68, 0.15); color: var(--rose-light); border-color: rgba(239, 68, 68, 0.3);">
+      {{ code|default('!') }}
+    </div>
+    <h2 style="margin-top: 16px;">{{ title|default('An Error Occurred') }}</h2>
+    <p class="footer-note" style="margin-top: 10px; font-size: 14px; color: var(--text-muted);">
+      {{ message|default('The requested operation could not be completed.') }}
+    </p>
+    <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: center;">
+      <a href="{{ url_for('index') }}" class="btn btn-primary">Return to Home</a>
+      <button onclick="history.back()" class="btn btn-outline">Go Back</button>
+    </div>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+</body>
+</html>

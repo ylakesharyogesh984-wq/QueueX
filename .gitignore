@@ -1,8 +1,24 @@
 venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 database.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment & Secret files
 .env
+.env.*
+*.env
+!.env.example
+.secrets
+update_admin_routes.py
+*.key
+*.pem
+*.cert
+
 .DS_Store
 __MACOSX/
 .queuex.pid

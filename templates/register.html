@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#6366F1">
+<meta name="theme-color" content="#06B6D4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="QueueX">
 <title>Student Registration — QueueX</title>
@@ -11,56 +11,105 @@
 <link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
-<body>
+<body data-interface="student">
 
 <div class="navbar">
   <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+  <div class="nav-actions">
+    <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
+    <button class="burger-btn" id="burger-btn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="nav-links">
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+    </button>
+  </div>
+  <div class="nav-links" id="nav-links">
+    <a href="{{ url_for('index') }}" class="btn btn-outline btn-sm">Home</a>
+    <a href="{{ url_for('student') }}" class="btn btn-primary btn-sm">Get Token</a>
+    <a href="{{ url_for('student_login') }}" class="btn btn-outline btn-sm">Login</a>
+  </div>
 </div>
+<div class="nav-backdrop" id="nav-backdrop"></div>
 
 <div class="container-narrow">
-  <div class="card login-card">
-    <span class="badge-role">CREATE ACCOUNT</span>
+  <div class="card login-card" style="max-width: 520px;">
+    <span class="badge-role badge-role-student">🎓 CREATE STUDENT ACCOUNT</span>
     <h2 style="margin-top:14px;">Student Registration</h2>
-    <p class="sub">Create your QueueX account</p>
+    <p class="sub">Register with your <strong>Email</strong> or <strong>Mobile Number</strong> to get instant live token passes</p>
 
     {% if error %}
-    <div class="error-msg">{{ error }}</div>
+    <div class="error-msg">⚠️ {{ error }}</div>
     {% endif %}
 
-    <form method="POST">
-      <label>Full Name</label>
-      <input type="text" name="full_name" placeholder="Your full name" required>
+    <form method="POST" id="register-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="reg-name">Full Name *</label>
+      <input type="text" id="reg-name" name="full_name" placeholder="e.g. Yogesh Kumar" required>
 
-      <label>Email</label>
-      <input type="email" name="email" placeholder="you@college.edu" required>
+      <div style="background:rgba(6, 182, 212, 0.08); border:1px solid rgba(6, 182, 212, 0.25); border-radius:var(--radius-md); padding:14px 16px; margin:18px 0 10px;">
+        <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700; color:var(--cyan-light); font-family:var(--font-mono); margin-bottom:10px;">
+          <span>📱</span> CONTACT DETAILS (EMAIL OR MOBILE)
+        </div>
+        <p style="font-size:12.5px; color:var(--text-secondary); margin-bottom:12px; line-height:1.5;">
+          Provide your <strong>Email</strong> or <strong>10-digit Mobile Number</strong> (or both) to receive queue notifications.
+        </p>
 
-      <label>Phone</label>
-      <input type="text" name="phone" placeholder="10-digit phone number" required>
+        <label for="reg-email" style="margin-top:0;">Campus Email</label>
+        <input type="email" id="reg-email" name="email" placeholder="you@college.edu">
 
-      <label>Roll Number</label>
-      <input type="text" name="roll_no" placeholder="Your roll number" required>
+        <label for="reg-phone">Mobile Phone (10 digits)</label>
+        <input type="tel" id="reg-phone" name="phone" placeholder="e.g. 9876543210" pattern="[0-9]{10}" maxlength="10">
+      </div>
 
-      <label>Department</label>
-      <input type="text" name="department" placeholder="e.g. Computer Science">
+      <label for="reg-roll">Roll Number</label>
+      <input type="text" id="reg-roll" name="roll_no" placeholder="e.g. 21CS045">
 
-      <label>Semester</label>
-      <input type="text" name="semester" placeholder="e.g. 5th">
+      <div class="grid-2" style="gap:14px; margin-top:0;">
+        <div>
+          <label for="reg-dept">Department</label>
+          <input type="text" id="reg-dept" name="department" placeholder="e.g. Computer Science">
+        </div>
+        <div>
+          <label for="reg-sem">Semester</label>
+          <input type="text" id="reg-sem" name="semester" placeholder="e.g. 5th">
+        </div>
+      </div>
 
-      <label>Password</label>
-      <input type="password" name="password" placeholder="Minimum 6 characters" required>
+      <div class="grid-2" style="gap:14px; margin-top:0;">
+        <div>
+          <label for="reg-pass">Password *</label>
+          <input type="password" id="reg-pass" name="password" placeholder="Min 6 chars" required minlength="6">
+        </div>
+        <div>
+          <label for="reg-confirm">Confirm Password *</label>
+          <input type="password" id="reg-confirm" name="confirm_password" placeholder="Re-enter password" required minlength="6">
+        </div>
+      </div>
 
-      <label>Confirm Password</label>
-      <input type="password" name="confirm_password" placeholder="Re-enter password" required>
-
-      <button type="submit" class="btn btn-primary btn-block" style="margin-top:24px;">Create Account</button>
+      <button type="submit" class="btn btn-primary btn-block" style="margin-top:24px;">🚀 Create Account & Issue Token Pass</button>
     </form>
 
     <p class="footer-note">
-      Already have an account? <a href="{{ url_for('student_login') }}">Login here</a>
+      Already have an account? <a href="{{ url_for('student_login') }}" style="color:var(--accent-light); font-weight:600;">Sign in here</a><br>
+      Or issue a token directly as a <a href="{{ url_for('student') }}" style="color:var(--accent-light);">Guest</a>
     </p>
   </div>
 </div>
+
+<script>
+document.getElementById('register-form').addEventListener('submit', function(e) {
+  const email = document.getElementById('reg-email').value.trim();
+  const phone = document.getElementById('reg-phone').value.trim();
+  if (!email && !phone) {
+    e.preventDefault();
+    alert('Please provide either an Email address or a Mobile Number to register.');
+    document.getElementById('reg-phone').focus();
+  }
+});
+</script>
+<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
 </body>
 </html>

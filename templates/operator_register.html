@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#F59E0B">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="QueueX">
+<title>Operator Registration — QueueX</title>
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+</head>
+<body data-interface="operator">
+
+<div class="navbar">
+  <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+  <div class="nav-actions">
+    <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
+    <button class="burger-btn" id="burger-btn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="nav-links">
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+    </button>
+  </div>
+  <div class="nav-links" id="nav-links">
+    <a href="{{ url_for('index') }}" class="btn btn-outline btn-sm">Home</a>
+    <a href="{{ url_for('operator_login') }}" class="btn btn-outline btn-sm">Operator Login</a>
+    <a href="{{ url_for('admin_login') }}" class="btn btn-outline btn-sm">Admin Portal</a>
+  </div>
+</div>
+<div class="nav-backdrop" id="nav-backdrop"></div>
+
+<div class="container-narrow">
+  <div class="card login-card" style="max-width: 520px;">
+    <span class="badge-role badge-role-operator">⚡ CREATE OPERATOR ACCOUNT</span>
+    <h2 style="margin-top:14px;">Staff Registration</h2>
+    <p class="sub">Register counter operator profile using <strong>Email</strong> or <strong>Mobile Number</strong></p>
+
+    {% if error %}
+    <div class="error-msg">⚠️ {{ error }}</div>
+    {% endif %}
+
+    <form method="POST" id="op-reg-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="op-name">Full Name *</label>
+      <input type="text" id="op-name" name="full_name" placeholder="e.g. Priya Sharma" required>
+
+      <div style="background:rgba(245, 158, 11, 0.08); border:1px solid rgba(245, 158, 11, 0.25); border-radius:var(--radius-md); padding:14px 16px; margin:18px 0 10px;">
+        <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700; color:var(--amber-light); font-family:var(--font-mono); margin-bottom:10px;">
+          <span>📱</span> OPERATOR CONTACT (EMAIL OR MOBILE)
+        </div>
+        <p style="font-size:12.5px; color:var(--text-secondary); margin-bottom:12px; line-height:1.5;">
+          Provide your <strong>Work Email</strong> or <strong>10-digit Mobile Number</strong> (or both) to sign in.
+        </p>
+
+        <label for="op-email" style="margin-top:0;">Operator Email</label>
+        <input type="email" id="op-email" name="email" placeholder="priya@queuex.internal">
+
+        <label for="op-phone">Mobile Phone (10 digits)</label>
+        <input type="tel" id="op-phone" name="phone" placeholder="e.g. 9876543210" pattern="[0-9]{10}" maxlength="10">
+      </div>
+
+      <div class="grid-2" style="gap:14px; margin-top:0;">
+        <div>
+          <label for="op-emp">Employee / Staff ID</label>
+          <input type="text" id="op-emp" name="employee_id" placeholder="e.g. OP-104">
+        </div>
+        <div>
+          <label for="op-counter">Assigned Station</label>
+          <select id="op-counter" name="assigned_counter">
+            <option value="">All / Flexible</option>
+            {% for c in counters %}
+            <option value="{{ c.slug }}">{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="grid-2" style="gap:14px; margin-top:0;">
+        <div>
+          <label for="op-pw">Password *</label>
+          <input type="password" id="op-pw" name="password" placeholder="Min 6 chars" required minlength="6">
+        </div>
+        <div>
+          <label for="op-cpw">Confirm Password *</label>
+          <input type="password" id="op-cpw" name="confirm_password" placeholder="Re-enter" required minlength="6">
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-block" style="margin-top:24px;">🚀 Create Account & Enter Terminal</button>
+    </form>
+
+    <p class="footer-note">
+      Already have an operator account? <a href="{{ url_for('operator_login') }}" style="color:var(--amber-light); font-weight:600;">Sign in here</a>
+    </p>
+  </div>
+</div>
+
+<script>
+document.getElementById('op-reg-form').addEventListener('submit', function(e) {
+  const email = document.getElementById('op-email').value.trim();
+  const phone = document.getElementById('op-phone').value.trim();
+  if (!email && !phone) {
+    e.preventDefault();
+    alert('Please provide either an Email address or a Mobile Number to create an operator account.');
+    document.getElementById('op-phone').focus();
+  }
+});
+</script>
+<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+</body>
+</html>

@@ -4,7 +4,15 @@
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$PROJECT_DIR/.queuex.pid"
 LOG_FILE="$PROJECT_DIR/queuex.log"
-PORT="${PORT:-5000}"
+# Default port selection (auto-fallback if port 5000 is taken by macOS AirPlay)
+if [ -z "$PORT" ]; then
+    if lsof -ti :5000 >/dev/null 2>&1; then
+        echo "ℹ️  Port 5000 is occupied (e.g. macOS AirPlay). Using fallback port 5001."
+        PORT=5001
+    else
+        PORT=5000
+    fi
+fi
 
 echo "========================================"
 echo " Starting QueueX..."

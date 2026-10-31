@@ -3,16 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#6366F1">
+<meta name="theme-color" content="#06B6D4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="QueueX">
-<title>Get Token — QueueX</title>
+<title>Issue Token Pass — QueueX</title>
 <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
 <link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
-<body>
+<body data-interface="student">
 
 <div class="navbar">
   <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
@@ -37,70 +38,162 @@
 </div>
 <div class="nav-backdrop" id="nav-backdrop"></div>
 
-<div class="container-narrow">
-  <div class="card">
-    <div class="step-indicator">
-      <div class="step-dot active" id="dot-1"></div>
-      <div class="step-dot" id="dot-2"></div>
+<div class="container">
+
+  {% if student_user %}
+    <!-- LOGGED-IN STUDENT PROFILE BAR -->
+    <div class="student-profile-bar">
+      <div class="student-profile-left">
+        <div class="student-avatar-badge">
+          {{ student_user['full_name'][:2]|upper }}
+        </div>
+        <div class="student-info">
+          <div class="student-name-row">
+            <h3>{{ student_user['full_name'] }}</h3>
+            <span class="badge badge-served" style="font-size:11px; padding:3px 10px;">● VERIFIED STUDENT</span>
+          </div>
+          <div class="student-meta-chips">
+            {% if student_user['student_uid'] %}<span class="meta-chip" style="font-weight:700; color:var(--cyan-light);">🆔 {{ student_user['student_uid'] }}</span>{% endif %}
+            {% if student_user['roll_no'] %}<span class="meta-chip">Roll: {{ student_user['roll_no'] }}</span>{% endif %}
+            {% if student_user['department'] %}<span class="meta-chip">🏛️ {{ student_user['department'] }}</span>{% endif %}
+            {% if student_user['email'] %}<span class="meta-chip">✉️ {{ student_user['email'] }}</span>{% endif %}
+            {% if student_user['phone'] %}<span class="meta-chip">📱 {{ student_user['phone'] }}</span>{% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="student-profile-actions">
+        <a href="{{ url_for('my_tokens') }}" class="btn btn-outline btn-sm">📂 My Passes</a>
+        <a href="{{ url_for('student_logout') }}" class="btn btn-outline btn-sm" title="Sign out / Switch account">Switch</a>
+      </div>
+    </div>
+  {% else %}
+    <!-- GUEST PROMPT BANNER -->
+    <div class="token-notice-banner">
+      <div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+          <span class="badge-role badge-role-student" style="font-size:11px;">FAST DISPATCH</span>
+          <strong style="font-size:15px; color:var(--text-primary);">Save time and track across devices</strong>
+        </div>
+        <p style="font-size:13.5px; color:var(--text-muted); margin:0;">
+          Sign in using your <strong>Student ID</strong> (e.g. AIT-24-CS001), <strong>Email</strong>, or <strong>Roll Number</strong> to instantly track tokens.
+        </p>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <a href="{{ url_for('student_login') }}" class="btn btn-outline btn-sm">Sign In</a>
+        <a href="{{ url_for('register') }}" class="btn btn-primary btn-sm">Create Account</a>
+      </div>
+    </div>
+  {% endif %}
+
+  <!-- MAIN TOKEN FORM -->
+  <form action="{{ url_for('get_token') }}" method="POST" id="token-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    {% if not student_user %}
+      <!-- GUEST STUDENT DETAILS CARD -->
+      <div class="card" style="margin-bottom:28px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+          <div>
+            <h3 style="font-size:18px;">Student Information</h3>
+            <p style="font-size:13px; color:var(--text-muted); margin-top:2px;">Enter your college credentials to link your queue ticket</p>
+          </div>
+          <span class="badge-role" style="font-size:11px;">GUEST DISPATCH</span>
+        </div>
+
+        <div class="grid-3" style="gap:16px;">
+          <div>
+            <label for="student-name">Full Name *</label>
+            <input type="text" id="student-name" name="student_name" placeholder="e.g. Yogesh Kumar" required>
+          </div>
+          <div>
+            <label for="student-roll">Roll Number / Student ID *</label>
+            <input type="text" id="student-roll" name="roll_no" placeholder="e.g. 24CS01 or AIT-24-CS001" required>
+          </div>
+          <div>
+            <label for="student-phone">Mobile Phone *</label>
+            <input type="tel" id="student-phone" name="phone" placeholder="10-digit number" pattern="[0-9]{10}" required>
+          </div>
+        </div>
+
+        <div style="margin-top:14px;">
+          <label for="guest-father" style="margin-top:0;">Father's / Guardian's Name (Optional)</label>
+          <input type="text" id="guest-father" name="father_name" placeholder="e.g. Ramesh Kumar (optional for receipts)">
+        </div>
+      </div>
+    {% else %}
+      <!-- HIDDEN CREDENTIALS FOR LOGGED-IN STUDENT -->
+      <input type="hidden" name="student_name" value="{{ student_user['full_name'] }}">
+      <input type="hidden" name="roll_no" value="{{ student_user['roll_no'] or '' }}">
+      <input type="hidden" name="phone" value="{{ student_user['phone'] or '' }}">
+    {% endif %}
+
+    <!-- COUNTER SELECTION HEADER -->
+    <div style="margin-bottom:16px; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px;">
+      <div>
+        <h2 style="font-size:24px;">Select Campus Counter Station</h2>
+        <p style="font-size:14px; color:var(--text-muted); margin-top:4px;">Tap a counter to choose your service queue</p>
+      </div>
+      <span class="badge-role" style="font-size:11.5px; color:var(--cyan-light);">{{ counters|length }} ACTIVE STATIONS</span>
     </div>
 
-    <form action="{{ url_for('get_token') }}" method="POST" id="token-form">
+    <input type="hidden" name="counter" id="selected-counter" required>
 
-      <div class="form-step active" id="step-1">
-        <h2>Your Details</h2>
-        <p class="footer-note" style="margin:6px 0 0;text-align:left;">Step 1 of 2</p>
-
-        {% if student_user %}
-          <p class="sub" style="margin-top:10px;">Logged in as <strong>{{ student_user['full_name'] }}</strong> ({{ student_user['roll_no'] }})</p>
-          <input type="hidden" name="student_name" value="{{ student_user['full_name'] }}">
-          <input type="hidden" name="roll_no" value="{{ student_user['roll_no'] }}">
-          <input type="hidden" name="phone" value="{{ student_user['phone'] }}">
-
-          <label>Father's Name</label>
-          <input type="text" name="father_name" placeholder="e.g. Ramesh Kumar" required>
-        {% else %}
-          <label>Full Name</label>
-          <input type="text" name="student_name" placeholder="e.g. Yogesh Kumar" required>
-
-          <label>Roll Number</label>
-          <input type="text" name="roll_no" placeholder="e.g. 21CS045" required>
-
-          <label>Father's Name</label>
-          <input type="text" name="father_name" placeholder="e.g. Ramesh Kumar" required>
-
-          <label>Phone Number</label>
-          <input type="tel" name="phone" placeholder="e.g. 9876543210" pattern="[0-9]{10}" required>
-
-          <p class="footer-note" style="margin-top:14px;">
-            Have an account? <a href="{{ url_for('student_login') }}">Login</a> to skip typing this every time.
-          </p>
-        {% endif %}
-
-        <button type="button" class="btn btn-primary btn-block" style="margin-top:24px;" id="next-btn">Continue →</button>
-      </div>
-
-      <div class="form-step" id="step-2">
-        <h2>Select a Counter</h2>
-        <p class="footer-note" style="margin:6px 0 0;text-align:left;">Step 2 of 2</p>
-
-        <input type="hidden" name="counter" id="selected-counter">
-
-        <div class="counter-grid">
-          {% for c in counters %}
-          <div class="counter-card" onclick="selectCounter(this, '{{ c.slug }}')">
-            <h4>{{ c.name }}</h4>
+    <!-- RICH COUNTER STATIONS GRID -->
+    <div class="counter-grid">
+      {% for c in counters %}
+      <div class="counter-card-rich" onclick="selectCounter(this, '{{ c.slug }}')">
+        <div>
+          <div class="counter-card-top">
+            <div class="counter-icon-title">
+              <div class="counter-icon-avatar">
+                {% if 'exam' in c.slug %}🏛️
+                {% elif 'account' in c.slug or 'fee' in c.slug %}💳
+                {% elif 'lib' in c.slug %}📚
+                {% elif 'cafe' in c.slug or 'food' in c.slug %}☕
+                {% elif 'admiss' in c.slug %}🎓
+                {% elif 'print' in c.slug or 'photo' in c.slug %}🖨️
+                {% elif 'station' in c.slug %}✏️
+                {% else %}🏢
+                {% endif %}
+              </div>
+              <div>
+                <h4 style="font-size:16.5px; font-weight:700;">{{ c.name }}</h4>
+                <div style="font-size:12px; color:var(--text-dim); margin-top:2px;">{{ c.location }}</div>
+              </div>
+            </div>
+            <div class="counter-radio-indicator"></div>
           </div>
-          {% endfor %}
-        </div>
 
-        <div style="display:flex; gap:12px; margin-top:24px;">
-          <button type="button" class="btn btn-outline" id="back-btn" style="flex:1;">← Back</button>
-          <button type="submit" class="btn btn-primary" id="get-token-btn" style="flex:2;" disabled>Get Token</button>
+          <div class="counter-meta-row">
+            <span class="counter-tag-pill">⏱️ {{ c.hours }}</span>
+            <span class="counter-tag-pill" style="color:var(--cyan-light);">⚡ ~{{ c.minutes }}m / student</span>
+          </div>
+
+          <p class="counter-desc">{{ c.description }}</p>
         </div>
       </div>
+      {% endfor %}
+    </div>
 
-    </form>
-  </div>
+    <!-- ACTION DECK -->
+    <div class="token-action-deck">
+      {% if student_user %}
+      <div style="flex:1; min-width:240px; margin-right:16px;">
+        <label for="auth-father" style="margin-top:0; font-size:11px;">Father's / Guardian's Name (Optional)</label>
+        <input type="text" id="auth-father" name="father_name" placeholder="Optional parent name for official documentation" style="padding:10px 14px; font-size:13.5px;">
+      </div>
+      {% else %}
+      <div style="color:var(--text-muted); font-size:13.5px;">
+        Select any counter card above to issue your pass immediately.
+      </div>
+      {% endif %}
+
+      <button type="submit" class="btn btn-primary" id="get-token-btn" style="min-width:230px; padding:14px 28px; font-size:16px;" disabled>
+        🎫 Issue Token Pass Now →
+      </button>
+    </div>
+
+  </form>
 </div>
 
 <script src="{{ url_for('static', filename='js/navbar.js') }}"></script>

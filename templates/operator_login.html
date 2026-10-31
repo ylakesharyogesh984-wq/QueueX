@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#6366F1">
+<meta name="theme-color" content="#F59E0B">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="QueueX">
 <title>Operator Login — QueueX</title>
@@ -11,36 +11,56 @@
 <link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon.svg') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
-<body>
+<body data-interface="operator">
 
 <div class="navbar">
   <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
+  <div class="nav-actions">
+    <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
+    <button class="burger-btn" id="burger-btn" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="nav-links">
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+      <span class="burger-line"></span>
+    </button>
+  </div>
+  <div class="nav-links" id="nav-links">
+    <a href="{{ url_for('index') }}" class="btn btn-outline btn-sm">Home</a>
+    <a href="{{ url_for('operator_register') }}" class="btn btn-outline btn-sm">Create Operator ID</a>
+    <a href="{{ url_for('admin_login') }}" class="btn btn-outline btn-sm">Admin Portal</a>
+  </div>
 </div>
+<div class="nav-backdrop" id="nav-backdrop"></div>
 
 <div class="container-narrow">
   <div class="card login-card">
-    <span class="badge-role">OPERATOR ACCESS</span>
-    <h2 style="margin-top:14px;">Operator Login</h2>
-    <p class="sub">Manage counters and call tokens</p>
+    <span class="badge-role badge-role-operator">⚡ OPERATOR CONSOLE</span>
+    <h2 style="margin-top:14px;">Operator Terminal Sign In</h2>
+    <p class="sub">Sign in using your <strong>Email</strong>, <strong>Mobile Number</strong>, or <strong>Employee ID</strong></p>
 
     {% if error %}
-    <div class="error-msg">{{ error }}</div>
+    <div class="error-msg">⚠️ {{ error }}</div>
     {% endif %}
 
     <form method="POST">
-      <label>Username</label>
-      <input type="text" name="username" placeholder="operator" required>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="op-id">Email, Mobile Number, or Operator ID</label>
+      <input type="text" id="op-id" name="username" placeholder="e.g. operator, 9876543210, or EMP-01" required>
 
-      <label>Password</label>
-      <input type="password" name="password" placeholder="operator123" required>
+      <label for="op-pass">Password</label>
+      <input type="password" id="op-pass" name="password" placeholder="••••••••" required>
 
-      <button type="submit" class="btn btn-primary btn-block" style="margin-top:24px;">Login</button>
+      <button type="submit" class="btn btn-primary btn-block" style="margin-top:24px;">Open Terminal Console →</button>
     </form>
 
-    <p class="footer-note">Demo — username: operator, password: operator123<br>(For demonstration only.)</p>
+    <p class="footer-note">
+      New counter staff? <a href="{{ url_for('operator_register') }}" style="color:var(--amber-light); font-weight:600;">Create Operator Account</a><br>
+      Demo staff credentials: username: <code>operator</code>, password: <code>operator123</code>
+    </p>
   </div>
 </div>
+<script src="{{ url_for('static', filename='js/navbar.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
 </body>
 </html>

@@ -9,7 +9,7 @@
 <link rel="icon" href="{{ url_for('static', filename='img/icon.svg') }}" type="image/svg+xml">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<body>
+<body data-interface="public">
 <div class="navbar">
   <a href="{{ url_for('index') }}" class="logo">Queue<span class="dot">X</span></a>
 </div>
@@ -17,9 +17,9 @@
 <div class="container-narrow">
   <div class="card offline-card">
     <div class="app-icon-mark">Q<span>X</span></div>
-    <h2>You are offline</h2>
-    <p class="footer-note">QueueX needs internet or campus Wi-Fi for live token updates.</p>
-    <a href="{{ url_for('index') }}" class="btn btn-primary btn-block">Try Again</a>
+    <h2>Connection Offline</h2>
+    <p class="footer-note" style="margin-top:10px;">QueueX requires internet or campus Wi-Fi for live real-time token tracking.</p>
+    <a href="{{ url_for('index') }}" class="btn btn-primary btn-block">Try Again →</a>
   </div>
 </div>
 <script src="{{ url_for('static', filename='js/pwa.js') }}"></script>

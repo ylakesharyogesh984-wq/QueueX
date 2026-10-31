@@ -37,16 +37,18 @@ if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE"
 fi
 
-# Fallback: check if any remaining process is listening on the app port
+# Fallback: check if any remaining process running QueueX is listening on the app port
 PORT_PID=$(lsof -ti :"$PORT" 2>/dev/null)
 if [ -n "$PORT_PID" ]; then
-    echo "Stopping process $PORT_PID occupying port $PORT..."
-    kill "$PORT_PID" 2>/dev/null
-    sleep 1
-    if kill -0 "$PORT_PID" 2>/dev/null; then
-        kill -9 "$PORT_PID" 2>/dev/null
+    if ps -p "$PORT_PID" -o command= 2>/dev/null | grep -q "app.py"; then
+        echo "Stopping QueueX process $PORT_PID occupying port $PORT..."
+        kill "$PORT_PID" 2>/dev/null
+        sleep 1
+        if kill -0 "$PORT_PID" 2>/dev/null; then
+            kill -9 "$PORT_PID" 2>/dev/null
+        fi
+        STOPPED=1
     fi
-    STOPPED=1
 fi
 
 if [ $STOPPED -eq 1 ]; then
