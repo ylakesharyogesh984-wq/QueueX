@@ -117,8 +117,12 @@
               <td style="padding: 0.65rem; font-weight: 600;">{{ t['student_name'] }}</td>
               <td style="padding: 0.65rem; font-family: var(--font-mono);">{{ t['student_roll'] }}</td>
               <td style="padding: 0.65rem;">{{ t['service_reason'] or '—' }}</td>
-              <td style="padding: 0.65rem; font-size: 0.78rem;">{{ t['created_at'][11:19] }}</td>
-              <td style="padding: 0.65rem; font-size: 0.78rem;">{% if t['completed_at'] %}{{ t['completed_at'][11:19] }}{% else %}—{% endif %}</td>
+              <td style="padding: 0.65rem; font-size: 0.78rem;">
+                {% if t['created_at'] and t['created_at']|length >= 19 %}{{ t['created_at'][11:19] }}{% elif t['created_at'] %}{{ t['created_at'] }}{% else %}—{% endif %}
+              </td>
+              <td style="padding: 0.65rem; font-size: 0.78rem;">
+                {% if t['completed_at'] and t['completed_at']|length >= 19 %}{{ t['completed_at'][11:19] }}{% elif t['completed_at'] %}{{ t['completed_at'] }}{% else %}—{% endif %}
+              </td>
               <td style="padding: 0.65rem;">
                 {% if t['status'] == 'served' %}
                   <span class="badge badge-success">Completed</span>

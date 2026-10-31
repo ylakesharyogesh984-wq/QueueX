@@ -181,7 +181,7 @@
                 <div style="font-weight: 600;">{{ t['counter_name'] }}</div>
                 <div style="font-size: 0.75rem; color: var(--text-muted);">{{ t['department_name'] }}</div>
               </td>
-              <td style="padding: 0.75rem; font-size: 0.8rem;">{{ t['created_at'][:16] }}</td>
+              <td style="padding: 0.75rem; font-size: 0.8rem;">{% if t['created_at'] %}{{ t['created_at'][:16] }}{% else %}—{% endif %}</td>
               <td style="padding: 0.75rem;">{{ t['service_reason'] or '—' }}</td>
               <td style="padding: 0.75rem;">
                 {% if t['status'] == 'served' %}

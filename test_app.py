@@ -681,6 +681,45 @@ class QueueXComprehensiveTestCase(unittest.TestCase):
             c.execute("SELECT status FROM tokens WHERE id = 1")
             self.assertEqual(c.fetchone()["status"], "served")
 
+    def test_null_resilience_in_templates_and_dashboards(self):
+        """Templates render safely without 500 errors when created_at, called_at, or role are NULL."""
+        # 1. Insert audit log with NULL created_at and NULL user_role
+        with queuex.db.get_db() as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO audit_logs (action, user_id, user_role, details, created_at)
+                VALUES ('TEST_NULL_ACTION', NULL, NULL, 'Simulating legacy null created_at', NULL)
+            """)
+            # Insert token with NULL created_at and NULL called_at
+            c.execute("""
+                INSERT INTO tokens (token_number, counter_id, department_id, student_id, student_name, student_roll, status, token_salt, created_at, called_at)
+                VALUES (999, 1, 1, 3, 'Null Date Student', '2201099', 'serving', 'salt', NULL, NULL)
+            """)
+            conn.commit()
+
+        # 2. Test Admin Dashboard with NULL audit log
+        self.login_admin()
+        admin_resp = self.client.get("/admin/dashboard")
+        self.assertEqual(admin_resp.status_code, 200)
+        self.assertIn("N/A", admin_resp.get_data(as_text=True))
+        self.assertIn("TEST_NULL_ACTION", admin_resp.get_data(as_text=True))
+
+        # 3. Test Operator Portal with NULL called_at currently serving
+        self.login_operator()
+        op_resp = self.client.get("/operator/dashboard")
+        self.assertEqual(op_resp.status_code, 200)
+        self.assertIn("Null Date Student", op_resp.get_data(as_text=True))
+
+        # 4. Test Student Portal with NULL token created_at
+        self.login_student()
+        st_resp = self.client.get("/student/dashboard")
+        self.assertEqual(st_resp.status_code, 200)
+
+        # 5. Test sw.js endpoint returns 200
+        sw_resp = self.client.get("/sw.js")
+        self.assertEqual(sw_resp.status_code, 200)
+        self.assertEqual(sw_resp.mimetype, "application/javascript")
+
 
 if __name__ == "__main__":
     unittest.main()

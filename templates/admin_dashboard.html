@@ -124,12 +124,14 @@
           <tbody>
             {% for a in recent_audits %}
               <tr style="border-bottom: 1px solid var(--border-subtle);">
-                <td style="padding: 0.6rem; font-size: 0.8rem; color: var(--text-muted);">{{ a['created_at'][:19] }}</td>
-                <td style="padding: 0.6rem;">
-                  <span class="badge badge-info">{{ a['action'] }}</span>
+                <td style="padding: 0.6rem; font-size: 0.8rem; color: var(--text-muted);">
+                  {% if a['created_at'] %}{{ a['created_at'][:19] }}{% else %}N/A{% endif %}
                 </td>
-                <td style="padding: 0.6rem; font-weight: 600;">{{ a['user_role']|capitalize }} #{{ a['user_id'] }}</td>
-                <td style="padding: 0.6rem;">{{ a['details'] }}</td>
+                <td style="padding: 0.6rem;">
+                  <span class="badge badge-info">{{ a['action'] or 'LOG' }}</span>
+                </td>
+                <td style="padding: 0.6rem; font-weight: 600;">{{ (a['user_role'] or 'System')|capitalize }} #{{ a['user_id'] or '—' }}</td>
+                <td style="padding: 0.6rem;">{{ a['details'] or '—' }}</td>
               </tr>
             {% else %}
               <tr>

@@ -478,6 +478,16 @@ def health_check():
         return jsonify({"status": "unhealthy", "error": str(e)}), 503
 
 
+@app.route("/sw.js")
+def service_worker():
+    """Serve a clean service worker response to prevent 404 logs from PWA clients."""
+    return Response(
+        "// QueueX Service Worker\nself.addEventListener('install', () => self.skipWaiting());\nself.addEventListener('activate', () => self.clients.claim());\n",
+        mimetype="application/javascript",
+        headers={"Cache-Control": "public, max-age=86400"}
+    )
+
+
 # -------------------------------------------------------------
 # PUBLIC & AUTHENTICATION ENDPOINTS
 # -------------------------------------------------------------

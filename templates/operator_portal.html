@@ -149,7 +149,7 @@
                 </div>
               </div>
               <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.4rem;">
-                Reason: <strong>{{ currently_serving['service_reason'] or 'General Enquiry' }}</strong> • Called at: {{ currently_serving['called_at'][:16] }}
+                Reason: <strong>{{ currently_serving['service_reason'] or 'General Enquiry' }}</strong> • Called at: {% if currently_serving['called_at'] %}{{ currently_serving['called_at'][:16] }}{% else %}Just now{% endif %}
               </div>
             {% else %}
               <div style="font-size: 1.4rem; font-weight: 700; color: var(--text-muted); margin-top: 0.5rem;">
@@ -236,7 +236,9 @@
                 <td style="padding: 0.75rem; font-weight: 600;">{{ t['student_name'] }}</td>
                 <td style="padding: 0.75rem; font-family: var(--font-mono);">{{ t['student_roll'] }}</td>
                 <td style="padding: 0.75rem;">{{ t['service_reason'] or '—' }}</td>
-                <td style="padding: 0.75rem; font-size: 0.8rem; color: var(--text-secondary);">{{ t['created_at'][11:19] }}</td>
+                <td style="padding: 0.75rem; font-size: 0.8rem; color: var(--text-secondary);">
+                  {% if t['created_at'] and t['created_at']|length >= 19 %}{{ t['created_at'][11:19] }}{% elif t['created_at'] %}{{ t['created_at'] }}{% else %}—{% endif %}
+                </td>
                 <td style="padding: 0.75rem;">
                   <span class="badge badge-warning">Waiting in Line</span>
                 </td>
